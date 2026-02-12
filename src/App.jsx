@@ -4244,7 +4244,7 @@ const ProfileScreen = () => {
                 color: '#666',
                 margin: '0 0 0.75rem 0'
               }}>
-                📱 スマホで登録する場合
+              スマホで登録する場合
               </p>
               <button
                 onClick={() => setCurrentView('qr-register')}
@@ -4261,7 +4261,7 @@ const ProfileScreen = () => {
                 }}
                 disabled={loading}
               >
-                📷 QRコードを表示する
+                QRコードを表示する
               </button>
             </div>
           </div>
@@ -4310,7 +4310,7 @@ const ProfileScreen = () => {
         <div className="register-container">
           <div className="register-hero">
           <div className="register-icon">
-          <i className="fas fa-camera" style={{fontSize: '4rem', color: '#667eea'}}></i>
+          <i className="fas fa-camera" style={{fontSize: '4rem', color: '#ffffff'}}></i>
           </div>
             <h1>QRコードで登録</h1>
             <p>スマホでQRコードを読み取ってください</p>
