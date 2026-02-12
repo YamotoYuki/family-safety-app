@@ -4275,7 +4275,7 @@ const ProfileScreen = () => {
     const [copied, setCopied] = React.useState(false);
 
     // このアプリのURL（スマホが開く先）
-    const registerUrl = window.location.origin + window.location.pathname + '#register';
+    const registerUrl = `${window.location.origin}/#register`;
 
     // URLをコピー
     const copyUrl = async () => {
@@ -4309,9 +4309,9 @@ const ProfileScreen = () => {
       <div className="register-screen">
         <div className="register-container">
           <div className="register-hero">
-            <div className="register-icon">
-              <span style={{fontSize: '4rem'}}>📷</span>
-            </div>
+          <div className="register-icon">
+          <i className="fas fa-camera" style={{fontSize: '4rem', color: '#667eea'}}></i>
+          </div>
             <h1>QRコードで登録</h1>
             <p>スマホでQRコードを読み取ってください</p>
           </div>
@@ -4325,12 +4325,12 @@ const ProfileScreen = () => {
               marginBottom: '1.5rem',
               border: '1px solid #90CAF9'
             }}>
-              <p style={{margin: 0, fontSize: '0.9rem', color: '#1565C0'}}>
-                <strong>使い方：</strong><br/>
-                1️⃣ スマホのカメラでQRコードを読み取る<br/>
-                2️⃣ 自動でブラウザが開く<br/>
-                3️⃣ そのまま新規登録できます！
-              </p>
+            <p style={{margin: 0, fontSize: '0.9rem', color: '#1565C0'}}>
+             <strong>使い方：</strong><br/>
+             ① スマホのカメラでQRコードを読み取る<br/>
+             ② 自動でブラウザが開く<br/>
+             ③ そのまま新規登録できます！
+            </p>
             </div>
 
             {/* QRコード表示 */}
@@ -4372,7 +4372,7 @@ const ProfileScreen = () => {
                 color: '#666',
                 marginBottom: '0.5rem'
               }}>
-                💡 QRコードが読めない場合は、このURLをLINEやメールで送ってください：
+                QRコードが読めない場合は、このURLをLINEやメールで送ってください：
               </p>
               <div style={{
                 display: 'flex',
@@ -4407,7 +4407,7 @@ const ProfileScreen = () => {
                     fontSize: '0.9rem'
                   }}
                 >
-                  {copied ? '✅ コピー済' : '📋 コピー'}
+                  {copied ? 'コピー済' : 'コピー'}
                 </button>
               </div>
             </div>
@@ -4432,7 +4432,7 @@ const ProfileScreen = () => {
                 gap: '0.5rem'
               }}
             >
-              📤 URLを共有する（LINE・メール等）
+              URLを共有する（LINE・メール等）
             </button>
 
             {/* 戻るボタン */}
