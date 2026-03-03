@@ -3201,99 +3201,6 @@ body {
   box-shadow: 0 8px 24px rgba(239, 83, 80, 0.4);
 }
 
-/* レスポンシブ対応 */
-@media (max-width: 480px) {
-  .emergency-dialog-new {
-    padding: 2rem 1.5rem;
-    border-radius: 20px;
-  }
-
-  .emergency-icon-new {
-    width: 80px;
-    height: 80px;
-  }
-
-  .emergency-icon-new svg {
-    width: 48px;
-    height: 48px;
-  }
-
-  .emergency-dialog-new h2 {
-    font-size: 1.3rem;
-  }
-
-  .emergency-actions-new {
-    flex-direction: column;
-  }
-
-  .emergency-cancel-btn,
-  .emergency-confirm-btn {
-    width: 100%;
-  }
-}
-
-/* レスポンシブ対応 */
-@media (max-width: 640px) {
-  .activity-item {
-    gap: 0.75rem;
-  }
-
-  .activity-icon {
-    width: 40px;
-    height: 40px;
-  }
-
-  .alert-item-new {
-    flex-wrap: wrap;
-    padding: 1rem;
-  }
-
-  .alert-actions-new {
-    width: 100%;
-    flex-direction: row;
-    justify-content: flex-end;
-  }
-}
-
-/* レスポンシブ対応 */
-@media (max-width: 640px) {
-  .child-schedule-item {
-    flex-wrap: wrap;
-  }
-
-  .child-schedule-time {
-    min-width: 50px;
-    padding: 0.375rem 0.5rem;
-    font-size: 1rem;
-  }
-}
-
-/* レスポンシブ対応 */
-@media (max-width: 640px) {
-  .schedule-item {
-    flex-wrap: wrap;
-  }
-
-  .schedule-time-badge {
-    min-width: 60px;
-    padding: 0.5rem 0.375rem;
-  }
-
-  .schedule-time-hour {
-    font-size: 1.5rem;
-  }
-
-  .schedule-time-minute {
-    font-size: 1rem;
-  }
-
-  .schedule-actions {
-    width: 100%;
-    justify-content: flex-end;
-    margin-top: 0.5rem;
-  }
-}
-
 /* ---------- タブレット（横向き）: 900px以下 ---------- */
 @media (max-width: 900px) {
   .dashboard-main {
@@ -3381,6 +3288,25 @@ body {
 
   .schedule-item {
     flex-wrap: wrap;
+  }
+
+  .schedule-time-badge {
+    min-width: 60px;
+    padding: 0.5rem 0.375rem;
+  }
+
+  .schedule-time-hour {
+    font-size: 1.5rem;
+  }
+
+  .schedule-time-minute {
+    font-size: 1rem;
+  }
+
+  .schedule-actions {
+    width: 100%;
+    justify-content: flex-end;
+    margin-top: 0.5rem;
   }
 
   .schedule-status {
@@ -3792,6 +3718,36 @@ body {
     width: 40px;
     height: 40px;
   }
+
+  .activity-item {
+    gap: 0.75rem;
+  }
+
+  .activity-icon {
+    width: 40px;
+    height: 40px;
+  }
+
+  .alert-item-new {
+    flex-wrap: wrap;
+    padding: 1rem;
+  }
+
+  .alert-actions-new {
+    width: 100%;
+    flex-direction: row;
+    justify-content: flex-end;
+  }
+
+    .child-schedule-item {
+    flex-wrap: wrap;
+  }
+
+  .child-schedule-time {
+    min-width: 50px;
+    padding: 0.375rem 0.5rem;
+    font-size: 1rem;
+  }
 }
 
 /* ---------- スマートフォン（中）: 480px以下 ---------- */
@@ -3853,6 +3809,34 @@ body {
   .group-avatar {
     width: 52px;
     height: 52px;
+  }
+
+  .emergency-dialog-new {
+    padding: 2rem 1.5rem;
+    border-radius: 20px;
+  }
+
+  .emergency-icon-new {
+    width: 80px;
+    height: 80px;
+  }
+
+  .emergency-icon-new svg {
+    width: 48px;
+    height: 48px;
+  }
+
+  .emergency-dialog-new h2 {
+    font-size: 1.3rem;
+  }
+
+  .emergency-actions-new {
+    flex-direction: column;
+  }
+
+  .emergency-cancel-btn,
+  .emergency-confirm-btn {
+    width: 100%;
   }
 }
 

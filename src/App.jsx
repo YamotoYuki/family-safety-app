@@ -7678,14 +7678,6 @@ const saveEdit = async () => {
             <button className="profile-btn" onClick={() => setCurrentView('profile')}>
               <Settings size={18} />
             </button>
-            <button onClick={async () => {
-              if (watchIdRef.current !== null) {
-                navigator.geolocation.clearWatch(watchIdRef.current);
-                watchIdRef.current = null;
-              }
-              await supabase.auth.signOut();
-              setCurrentUser(null); setCurrentView('login');
-            }} className="logout-btn-simple"><LogOut size={18} /></button>
           </div>
         </header>
 
