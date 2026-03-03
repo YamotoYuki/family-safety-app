@@ -1370,15 +1370,15 @@ useEffect(() => {
       }
 
       if (authData.user) {
-        const { error: profileError } = await supabase
-          .from('profiles')
-          .insert([{
-            id: authData.user.id,
-            name: formData.name,
-            role: formData.role,
-            phone: formData.phone,
-            email: formData.email,
-          }]);
+      const { error: profileError } = await supabase
+      .from('profiles')
+      .upsert([{
+        id: authData.user.id,
+        name: formData.name,
+        role: formData.role,
+        phone: formData.phone,
+        email: formData.email,
+      }]);
 
         if (profileError) {
           setError('プロファイルの保存に失敗しました');
@@ -1533,7 +1533,7 @@ useEffect(() => {
 
       const { error: profileError } = await supabase
         .from('profiles')
-        .insert([{
+        .upsert([{
           id: currentUser.id,
           name: name,
           role: selectedRole,
@@ -7908,4 +7908,3 @@ const saveEdit = async () => {
 };
 
 export default App
-
