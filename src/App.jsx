@@ -43,17 +43,18 @@ const App = () => {
   const [currentUser, setCurrentUser] = useState(null);
   const [loading, setLoading] = useState(false);
   const [dataLoading, setDataLoading] = useState(false);
-
   const [members, setMembers] = useState([]);
   const [messages, setMessages] = useState([]);
-  const [groupMessages, setGroupMessages] = useState([]);
   const [alerts, setAlerts] = useState([]);
   const [gpsEnabled, setGpsEnabled] = useState(false);
   const [batteryLevel, setBatteryLevel] = useState(null);
   const watchIdRef = useRef(null);
   const loadingRef = useRef(false);
   const batteryIntervalRef = useRef(null);
-  const [showParentList, setShowParentList] = useState(false);
+  const [childUnreadByParent, setChildUnreadByParent] = useState({});
+  const [groupUnreadByGroup, setGroupUnreadByGroup] = useState({});
+  
+
 
   const updateOnlineStatus = async (status) => {
     if (!currentUser?.id) return;
@@ -189,6 +190,60 @@ useEffect(() => {
       }
     };
   }, [currentUser, members]);
+
+  useEffect(() => {
+  if (!currentUser?.id) return;
+
+  const loadGroupUnread = async () => {
+    const { data: memberData } = await supabase
+      .from('group_members')
+      .select('group_id')
+      .eq('user_id', currentUser.id);
+
+    if (!memberData || memberData.length === 0) return;
+
+    const groupIds = memberData.map(m => m.group_id);
+
+    const { data: allMessages } = await supabase
+      .from('group_messages')
+      .select('id, group_id')
+      .in('group_id', groupIds);
+
+    const { data: readMessages } = await supabase
+      .from('group_message_reads')
+      .select('message_id')
+      .eq('user_id', currentUser.id);
+
+    const readIds = new Set(readMessages?.map(r => r.message_id) || []);
+
+    const counts = {};
+    allMessages?.forEach(m => {
+      if (!readIds.has(m.id)) {
+        counts[m.group_id] = (counts[m.group_id] || 0) + 1;
+      }
+    });
+    setGroupUnreadByGroup(counts);
+  };
+
+  loadGroupUnread();
+
+  const channel = supabase
+    .channel('group-unread-' + currentUser.id)
+    .on('postgres_changes', {
+      event: 'INSERT',
+      schema: 'public',
+      table: 'group_messages'
+    }, (payload) => {
+      if (payload.new.from_user_id === currentUser.id) return;
+      setGroupUnreadByGroup(prev => ({
+        ...prev,
+        [payload.new.group_id]: (prev[payload.new.group_id] || 0) + 1
+      }));
+    })
+    .subscribe();
+
+  return () => supabase.removeChannel(channel);
+}, [currentUser?.id]);
 
   // 保護者が子供をshort_idで追加
 const handleAddByShortId = async (user, shortId) => {
@@ -326,6 +381,7 @@ const handleAddParentByShortId = async (user, shortId) => {
           short_id: data.short_id
         };
         setCurrentUser(user);
+        
         setCurrentView(user.role === 'parent' ? 'parent-dashboard' : 'child-dashboard');
 
         const pendingShortId = sessionStorage.getItem('pendingAddShortId');
@@ -823,110 +879,196 @@ const handleAddParentByShortId = async (user, shortId) => {
     };
   }, [currentUser?.id]);
 
-  // アラートのリアルタイム購読とブラウザ通知
-  useEffect(() => {
-    if (!currentUser || currentUser.role !== 'parent') return;
+// メンバーステータスのリアルタイム購読（子供側）
+useEffect(() => {
+  if (!currentUser || currentUser.role !== 'child') return;
 
-    const channel = supabase
-      .channel('alerts')
-      .on(
-        'postgres_changes',
-        {
-          event: 'INSERT',
-          schema: 'public',
-          table: 'alerts'
-        },
-        async (payload) => {
-          console.log('New alert received:', payload.new);
-          
-          const { data: relationships } = await supabase
-            .from('parent_children')
-            .select('child_id')
-            .eq('parent_id', currentUser.id);
-          
-          if (relationships) {
-            const childIds = relationships.map(r => r.child_id);
-            const { data: membersData } = await supabase
-              .from('members')
-              .select('id, user_id')
-              .in('user_id', childIds);
-            
-            if (membersData) {
-              const memberIds = membersData.map(m => m.id);
-              
-              if (memberIds.includes(payload.new.member_id)) {
-                setAlerts(prev => [{
-                  id: payload.new.id,
-                  type: payload.new.type,
-                  memberId: payload.new.member_id,
-                  message: payload.new.message,
-                  timestamp: new Date(payload.new.created_at),
-                  read: payload.new.read || false
-                }, ...prev]);
-                
-                if ('Notification' in window && Notification.permission === 'granted') {
-                  new Notification('Family Safe - 緊急アラート', {
-                    body: payload.new.message,
-                    requireInteraction: true
-                  });
-                }
-              }
-            }
+  const myProfile = members.find(m => m.userId === currentUser.id);
+  if (!myProfile) return;
+
+  const channel = supabase
+    .channel('child-status-' + myProfile.id)
+    .on(
+      'postgres_changes',
+      {
+        event: 'UPDATE',
+        schema: 'public',
+        table: 'members',
+        filter: `id=eq.${myProfile.id}`
+      },
+      (payload) => {
+        // ← 比較チェックを削除して常に更新
+        setMembers(prev => prev.map(m =>
+          m.id === myProfile.id ? {
+            ...m,
+            status: payload.new.status,
+            gpsActive: payload.new.gps_enabled,
+            isMoving: payload.new.gps_enabled,
+          } : m
+        ));
+      }
+    )
+    .subscribe();
+
+  return () => supabase.removeChannel(channel);
+}, [currentUser?.id, members.find(m => m.userId === currentUser?.id)?.id]);
+
+useEffect(() => {
+  if (!currentUser || currentUser.role !== 'parent') return;
+
+  const channel = supabase
+    .channel('alerts-' + currentUser.id) // ← チャンネル名をユニークに
+    .on(
+      'postgres_changes',
+      {
+        event: 'INSERT',
+        schema: 'public',
+        table: 'alerts'
+      },
+      async (payload) => {
+        console.log('New alert received:', payload.new);
+
+        const { data: relationships } = await supabase
+          .from('parent_children')
+          .select('child_id')
+          .eq('parent_id', currentUser.id);
+
+        if (!relationships) return;
+
+        const childIds = relationships.map(r => r.child_id);
+        const { data: membersData } = await supabase
+          .from('members')
+          .select('id, user_id')
+          .in('user_id', childIds);
+
+        if (!membersData) return;
+
+        const memberIds = membersData.map(m => m.id);
+
+        if (memberIds.includes(payload.new.member_id)) {
+          // アラートを追加
+          setAlerts(prev => [{
+            id: payload.new.id,
+            type: payload.new.type,
+            memberId: payload.new.member_id,
+            message: payload.new.message,
+            timestamp: new Date(payload.new.created_at),
+            read: false
+          }, ...prev]);
+
+          // メンバーのステータスも即時更新
+          const member = membersData.find(m => m.id === payload.new.member_id);
+          if (member) {
+            setMembers(prev => prev.map(m =>
+              m.id === payload.new.member_id ? {
+                ...m,
+                status: payload.new.type === 'sos' ? 'danger' :
+                        payload.new.type === 'lost' ? 'warning' : m.status
+              } : m
+            ));
+          }
+
+          // ブラウザ通知
+          if ('Notification' in window && Notification.permission === 'granted') {
+            new Notification('Family Safe - 緊急アラート', {
+              body: payload.new.message,
+              requireInteraction: true
+            });
           }
         }
-      )
-      .subscribe();
+      }
+    )
+    .subscribe((status) => {
+      console.log('Alerts subscription status:', status); // ← 購読状態を確認
+    });
 
-    if ('Notification' in window && Notification.permission === 'granted') {
-      Notification.requestPermission();
-    }
+  return () => supabase.removeChannel(channel);
+}, [currentUser?.id]);
 
-    return () => {
-      supabase.removeChannel(channel);
-    };
-  }, [currentUser?.id, currentUser?.role]);
+// GPS状態のリアルタイム購読（子供側）
+useEffect(() => {
+  if (!currentUser || currentUser.role !== 'child') return;
 
-  // GPS状態のリアルタイム購読（子供側）
-  useEffect(() => {
-    if (!currentUser || currentUser.role !== 'child') return;
+  const myProfile = members.find(m => m.userId === currentUser.id);
+  if (!myProfile) return;
 
-    const myProfile = members.find(m => m.userId === currentUser.id);
-    if (!myProfile) return;
+  const channel = supabase
+    .channel(`member-gps-${myProfile.id}`)
+    .on(
+      'postgres_changes',
+      {
+        event: 'UPDATE',
+        schema: 'public',
+        table: 'members',
+        filter: `id=eq.${myProfile.id}`
+      },
+      (payload) => {
+        const newGpsState = payload.new.gps_enabled;
+        console.log('Member updated:', payload.new);
 
-    const channel = supabase
-      .channel(`member-gps-${myProfile.id}`)
-      .on(
-        'postgres_changes',
-        {
-          event: 'UPDATE',
-          schema: 'public',
-          table: 'members',
-          filter: `id=eq.${myProfile.id}`
-        },
-        (payload) => {
-          const newGpsState = payload.new.gps_enabled;
-          console.log('GPS state changed:', newGpsState);
-          setGpsEnabled(newGpsState);
-          
-          if (!newGpsState && watchIdRef.current !== null) {
-            console.log('Clearing watchPosition:', watchIdRef.current);
-            navigator.geolocation.clearWatch(watchIdRef.current);
-            watchIdRef.current = null;
-          }
-          
-          setMembers(prev => prev.map(m => 
-            m.id === myProfile.id ? { ...m, gpsActive: newGpsState, isMoving: newGpsState } : m
-          ));
+        if (!newGpsState && watchIdRef.current !== null) {
+          navigator.geolocation.clearWatch(watchIdRef.current);
+          watchIdRef.current = null;
         }
-      )
-      .subscribe((status) => {
-        console.log('GPS subscription status:', status);
-      });
 
-    return () => {
-      supabase.removeChannel(channel);
-    };
-  }, [currentUser, members]);
+        // ← ステータス更新を追加
+        setMembers(prev => prev.map(m =>
+          m.id === myProfile.id ? {
+            ...m,
+            gpsActive: newGpsState,
+            isMoving: newGpsState,
+            status: payload.new.status  // ← 追加
+          } : m
+        ));
+
+        setGpsEnabled(newGpsState);
+      }
+    )
+    .subscribe((status) => {
+      console.log('GPS subscription status:', status);
+    });
+
+  return () => {
+    supabase.removeChannel(channel);
+  };
+}, [currentUser, members]);
+
+  // メンバーステータスのリアルタイム購読（子供側）
+useEffect(() => {
+  if (!currentUser || currentUser.role !== 'child') return;
+
+  const myProfile = members.find(m => m.userId === currentUser.id);
+  if (!myProfile) return;
+
+  const channel = supabase
+    .channel('child-status-' + myProfile.id)
+    .on(
+      'postgres_changes',
+      {
+        event: 'UPDATE',
+        schema: 'public',
+        table: 'members',
+        filter: `id=eq.${myProfile.id}`
+      },
+      (payload) => {
+        const newStatus = payload.new.status;
+        const currentStatus = myProfile.status;
+
+        // ステータスが変わった時だけ更新
+        if (currentStatus === newStatus) return;
+
+        setMembers(prev => prev.map(m =>
+          m.id === myProfile.id ? {
+            ...m,
+            status: newStatus
+          } : m
+        ));
+      }
+    )
+    .subscribe();
+
+  return () => supabase.removeChannel(channel);
+}, [currentUser?.id, members.find(m => m.userId === currentUser?.id)?.id]);
 
 // GPS状態のリアルタイム購読（親側）
 useEffect(() => {
@@ -945,25 +1087,19 @@ useEffect(() => {
           filter: `id=eq.${member.id}`
         },
         (payload) => {
-          // ★★★ 変更がない場合は何もしない ★★★
           setMembers(prev => {
             const current = prev.find(m => m.id === member.id);
             if (!current) return prev;
-            
-            // 値が変わっていなければ更新しない
             const newGpsActive = payload.new.gps_enabled;
             const newLat = payload.new.latitude;
             const newLng = payload.new.longitude;
             const newBattery = payload.new.battery;
-
             if (current.gpsActive === newGpsActive && 
               current.location.lat === newLat && 
               current.location.lng === newLng &&
               current.battery === newBattery) { 
-            return prev;
+              return prev;
             }
-            
-            // 変更がある場合のみ更新
             return prev.map(m => 
               m.id === member.id ? { 
                 ...m, 
@@ -981,6 +1117,19 @@ useEffect(() => {
           });
         }
       )
+      // ← DELETEを追加
+      .on(
+        'postgres_changes',
+        {
+          event: 'DELETE',
+          schema: 'public',
+          table: 'members',
+          filter: `id=eq.${member.id}`
+        },
+        (payload) => {
+          setMembers(prev => prev.filter(m => m.id !== member.id));
+        }
+      )
       .subscribe();
     
     return channel;
@@ -990,6 +1139,29 @@ useEffect(() => {
     channels.forEach(channel => supabase.removeChannel(channel));
   };
 }, [currentUser, members.length]);
+
+// membersの削除を監視（保護者側）
+useEffect(() => {
+  if (!currentUser || currentUser.role !== 'parent') return;
+
+  const channel = supabase
+    .channel('members-delete-' + currentUser.id)
+    .on(
+      'postgres_changes',
+      {
+        event: 'DELETE',
+        schema: 'public',
+        table: 'members'
+      },
+      (payload) => {
+        console.log('Member deleted:', payload.old);
+        setMembers(prev => prev.filter(m => m.id !== payload.old.id));
+      }
+    )
+    .subscribe();
+
+  return () => supabase.removeChannel(channel);
+}, [currentUser?.id]);
 
   // GPS追跡開始（親が子供のGPSを遠隔制御）
   const startGPSTracking = async (memberId) => {
@@ -1773,7 +1945,18 @@ const { error: profileError } = await supabase
   };
 
 const ProfileScreen = () => {
+  const [showSwitchModal, setShowSwitchModal] = useState(false);
+  const [switchTarget, setSwitchTarget] = useState(null); // 切り替え先の情報
   const [uploading, setUploading] = useState(false);
+  const [editing, setEditing] = useState(false);
+  const [editForm, setEditForm] = useState({
+  name: currentUser?.name || '',
+  phone: currentUser?.phone || '',
+  email: currentUser?.email || '',
+  newPassword: '',
+  confirmPassword: '',
+  });
+  const [saving, setSaving] = useState(false);
   const isChild = currentUser?.role === 'child';
   const myProfile = members?.find(m => m.userId === currentUser?.id);
 
@@ -1802,6 +1985,77 @@ const ProfileScreen = () => {
       setUploading(false);
     }
   };
+
+const saveProfile = async () => {
+  if (!editForm.name.trim()) {
+    alert('名前を入力してください');
+    return;
+  }
+
+  // パスワードチェック
+  if (editForm.newPassword && editForm.newPassword.length < 6) {
+    alert('パスワードは6文字以上で入力してください');
+    return;
+  }
+  if (editForm.newPassword !== editForm.confirmPassword) {
+    alert('パスワードが一致しません');
+    return;
+  }
+
+  setSaving(true);
+  try {
+    // プロフィール更新
+    const { error: profileError } = await supabase
+      .from('profiles')
+      .update({
+        name: editForm.name.trim(),
+        phone: (editForm.phone || '').trim(),
+        updated_at: new Date().toISOString()
+      })
+      .eq('id', currentUser.id);
+
+    if (profileError) throw profileError;
+
+    // メールアドレス変更
+if ((editForm.email || '').trim() !== currentUser.email) {
+  const { error: emailError } = await supabase.auth.updateUser({
+    email: (editForm.email || '').trim()
+  });
+  if (emailError) throw emailError;
+  alert('確認メールを送信しました。メールを確認してください。');
+}
+
+    // パスワード変更
+    if (editForm.newPassword) {
+      const { error: passwordError } = await supabase.auth.updateUser({
+        password: editForm.newPassword
+      });
+      if (passwordError) throw passwordError;
+    }
+
+    // membersのnameも更新
+    if (currentUser.role === 'child') {
+      await supabase
+        .from('members')
+        .update({ name: editForm.name.trim() })
+        .eq('user_id', currentUser.id);
+    }
+
+    setCurrentUser({
+      ...currentUser,
+      name: editForm.name.trim(),
+      phone: (editForm.phone || '').trim(),
+      email: (editForm.email || '').trim()
+    });
+
+    setEditing(false);
+    alert('プロフィールを更新しました！');
+  } catch (error) {
+    alert('更新に失敗しました: ' + error.message);
+  } finally {
+    setSaving(false);
+  }
+};
 
   // ── 子供：既存デザイン ────────────────────────────────────
   if (isChild) {
@@ -1882,32 +2136,158 @@ const ProfileScreen = () => {
             </div>
           )}
 
-          <div className="status-card">
-            <h2 style={{ fontSize: '.8rem', fontWeight: 700, color: '#aaa', textTransform: 'uppercase', letterSpacing: 1, marginBottom: '.75rem' }}>アカウント情報</h2>
-            {[
-              { icon: <User size={18} color="#667eea" />, label: '名前', value: currentUser?.name },
-              { icon: <Mail size={18} color="#ec4899" />, label: 'メール', value: currentUser?.email },
-              currentUser?.phone && { icon: <Phone size={18} color="#22c55e" />, label: '電話番号', value: currentUser.phone },
-              { icon: <Shield size={18} color="#f59e0b" />, label: 'アカウント', value: '子どもアカウント' },
-            ].filter(Boolean).map((row, i, arr) => (
-              <div key={i}>
-                <div style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '.75rem 0' }}>
-                  <div style={{ width: 36, height: 36, borderRadius: 10, background: '#f8f8ff', flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{row.icon}</div>
-                  <div style={{ flex: 1, minWidth: 0 }}>
-                    <p style={{ margin: 0, fontSize: 11, color: '#aaa', fontWeight: 600 }}>{row.label}</p>
-                    <p style={{ margin: 0, fontSize: 14, color: '#222', fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{row.value}</p>
-                  </div>
-                </div>
-                {i < arr.length - 1 && <div style={{ height: 1, background: '#f0f0f0' }} />}
-              </div>
-            ))}
-          </div>
+<div className="status-card">
+  <div style={{display:'flex', alignItems:'center', justifyContent:'space-between', marginBottom:'.75rem'}}>
+    <h2 style={{fontSize:'.8rem', fontWeight:700, color:'#aaa', textTransform:'uppercase', letterSpacing:1, margin:0}}>アカウント情報</h2>
+    <button
+      onClick={() => {
+        setEditForm({ name: currentUser?.name || '', phone: currentUser?.phone || '' });
+        setEditing(!editing);
+      }}
+      style={{
+        background: editing ? '#f0f0f0' : 'linear-gradient(135deg,#667eea,#764ba2)',
+        color: editing ? '#666' : 'white',
+        border: 'none', borderRadius: 20, padding: '4px 14px',
+        fontSize: 13, fontWeight: 700, cursor: 'pointer'
+      }}
+    >
+      {editing ? 'キャンセル' : '編集'}
+    </button>
+  </div>
 
-          <button className="gps-toggle" onClick={() => setCurrentView('group-list')} style={{ background: 'linear-gradient(135deg,#667eea,#764ba2)', color: '#fff', border: 'none' }}>
+  {editing ? (
+    <div style={{display:'flex', flexDirection:'column', gap:'0.875rem'}}>
+      <div>
+        <label style={{fontSize:12, color:'#aaa', fontWeight:600, display:'block', marginBottom:4}}>名前</label>
+        <input
+          type="text"
+          value={editForm.name}
+          onChange={e => setEditForm({...editForm, name: e.target.value})}
+          style={{
+            width:'100%', padding:'0.75rem', border:'2px solid #667eea',
+            borderRadius:12, fontSize:14, outline:'none', boxSizing:'border-box'
+          }}
+        />
+      </div>
+          <div style={{height:1, background:'#f0f0f0'}} />
+    <p style={{margin:0, fontSize:11, color:'#aaa', fontWeight:700, textTransform:'uppercase', letterSpacing:1}}>
+      メール・パスワード変更
+    </p>
+    <div>
+      <label style={{fontSize:12, color:'#aaa', fontWeight:600, display:'block', marginBottom:4}}>メールアドレス</label>
+      <input
+        type="email"
+        value={editForm.email}
+        onChange={e => setEditForm({...editForm, email: e.target.value})}
+        style={{
+          width:'100%', padding:'0.75rem', border:'2px solid #e0e0e0',
+          borderRadius:12, fontSize:14, outline:'none', boxSizing:'border-box'
+        }}
+      />
+    </div>
+    <div>
+      <label style={{fontSize:12, color:'#aaa', fontWeight:600, display:'block', marginBottom:4}}>新しいパスワード（変更する場合のみ）</label>
+      <input
+        type="password"
+        value={editForm.newPassword}
+        onChange={e => setEditForm({...editForm, newPassword: e.target.value})}
+        placeholder="6文字以上"
+        style={{
+          width:'100%', padding:'0.75rem', border:'2px solid #e0e0e0',
+          borderRadius:12, fontSize:14, outline:'none', boxSizing:'border-box'
+        }}
+      />
+    </div>
+    <div>
+      <label style={{fontSize:12, color:'#aaa', fontWeight:600, display:'block', marginBottom:4}}>パスワード確認</label>
+      <input
+        type="password"
+        value={editForm.confirmPassword}
+        onChange={e => setEditForm({...editForm, confirmPassword: e.target.value})}
+        placeholder="パスワードを再入力"
+        style={{
+          width:'100%', padding:'0.75rem', border:'2px solid #e0e0e0',
+          borderRadius:12, fontSize:14, outline:'none', boxSizing:'border-box'
+        }}
+      />
+    </div>
+      <div>
+        <label style={{fontSize:12, color:'#aaa', fontWeight:600, display:'block', marginBottom:4}}>電話番号</label>
+        <input
+          type="tel"
+          value={editForm.phone}
+          onChange={e => setEditForm({...editForm, phone: e.target.value})}
+          placeholder="090-1234-5678"
+          style={{
+            width:'100%', padding:'0.75rem', border:'2px solid #e0e0e0',
+            borderRadius:12, fontSize:14, outline:'none', boxSizing:'border-box'
+          }}
+        />
+      </div>
+      <button
+        onClick={saveProfile}
+        disabled={saving}
+        style={{
+          width:'100%', padding:'0.875rem',
+          background:'linear-gradient(135deg,#667eea,#764ba2)',
+          color:'white', border:'none', borderRadius:12,
+          fontSize:15, fontWeight:700, cursor:'pointer'
+        }}
+      >
+        {saving ? '保存中...' : '保存する'}
+      </button>
+    </div>
+  ) : (
+    <div>
+      {[
+        { icon: <User size={18} color="#667eea" />, label: '名前', value: currentUser?.name },
+        { icon: <Mail size={18} color="#ec4899" />, label: 'メール', value: currentUser?.email },
+        currentUser?.phone && { icon: <Phone size={18} color="#22c55e" />, label: '電話番号', value: currentUser.phone },
+        { icon: <Shield size={18} color="#f59e0b" />, label: 'アカウント', value: '子どもアカウント' },
+      ].filter(Boolean).map((row, i, arr) => (
+        <div key={i}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '.75rem 0' }}>
+            <div style={{ width: 36, height: 36, borderRadius: 10, background: '#f8f8ff', flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{row.icon}</div>
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <p style={{ margin: 0, fontSize: 11, color: '#aaa', fontWeight: 600 }}>{row.label}</p>
+              <p style={{ margin: 0, fontSize: 14, color: '#222', fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{row.value}</p>
+            </div>
+          </div>
+          {i < arr.length - 1 && <div style={{ height: 1, background: '#f0f0f0' }} />}
+        </div>
+      ))}
+    </div>
+  )}
+</div>
+
+<button className="gps-toggle" onClick={() => setCurrentView('group-list')} style={{ background: 'linear-gradient(135deg,#667eea,#764ba2)', color: '#fff', border: 'none' }}>
             <Users size={18} /> グループチャット
           </button>
           <button className="gps-toggle" onClick={() => setCurrentView('child-dashboard')} style={{ background: '#fff', color: '#667eea', border: '2px solid #667eea' }}>
             ← ダッシュボードへ戻る
+          </button>
+          <button
+          onClick={() => {
+          const newMode = currentUser.role === 'parent' ? 'child' : 'parent';
+              setSwitchTarget({ mode: newMode, isReturn: false });
+              setShowSwitchModal(true);
+            }}
+            style={{
+              width: '100%', padding: '1rem',
+              background: 'linear-gradient(135deg,#f59e0b,#ef4444)',
+              color: 'white', border: 'none', borderRadius: 16,
+              fontSize: 15, fontWeight: 700, cursor: 'pointer',
+              display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8,
+              transition: 'transform .15s',
+            }}
+            onMouseEnter={e => e.currentTarget.style.transform = 'translateY(-2px)'}
+            onMouseLeave={e => e.currentTarget.style.transform = ''}
+          >
+          {currentUser.role === 'parent' ? (
+            <><User size={18} /> 子供に切り替え</>
+          ) : (
+            <><Shield size={18} /> 保護者に切り替え</>
+          )}
           </button>
           <button onClick={async () => {
             if (watchIdRef.current !== null) { navigator.geolocation.clearWatch(watchIdRef.current); watchIdRef.current = null; }
@@ -1917,6 +2297,132 @@ const ProfileScreen = () => {
           </button>
           <div style={{ height: 24 }} />
         </div>
+          {/* ── 切り替え確認モーダル ── */}
+          {showSwitchModal && switchTarget && (
+            <div style={{
+              position: 'fixed', top: 0, left: 0, right: 0, bottom: 0,
+              background: 'rgba(0,0,0,0.5)',
+              display: 'flex', alignItems: 'center', justifyContent: 'center',
+              zIndex: 10000, padding: '1rem'
+            }}>
+              <div style={{
+                background: 'white', borderRadius: 24, padding: '2rem 1.5rem',
+                maxWidth: 340, width: '100%', textAlign: 'center',
+                boxShadow: '0 10px 40px rgba(0,0,0,0.2)'
+              }}>
+                {/* アイコン */}
+                <div style={{
+                  width: 72, height: 72, borderRadius: '50%',
+                  background: switchTarget.isReturn ? '#ede9fe' : '#fef3c7',
+                  display: 'flex', alignItems: 'center', justifyContent: 'center',
+                  margin: '0 auto 1.25rem'
+                }}>
+                  {switchTarget.isReturn
+                    ? <ChevronRight size={36} color="#667eea" style={{transform:'rotate(180deg)'}} />
+                    : switchTarget.mode === 'child'
+                      ? <User size={36} color="#f59e0b" />
+                      : <Shield size={36} color="#f59e0b" />
+                  }
+                </div>
+
+                <h2 style={{margin:'0 0 0.75rem', fontSize:'1.25rem', fontWeight:800, color:'#1a1a2e'}}>
+                  {switchTarget.isReturn
+                    ? '元の画面に戻りますか？'
+                    : switchTarget.mode === 'child'
+                      ? '子供画面に切り替えますか？'
+                      : '保護者画面に切り替えますか？'
+                  }
+                </h2>
+                <p style={{margin:'0 0 1.5rem', fontSize:'0.9rem', color:'#666', lineHeight:1.6}}>
+                  {switchTarget.isReturn
+                    ? `元の${currentUser.role === 'parent' ? '保護者' : '子供'}画面に戻ります。`
+                    : switchTarget.mode === 'child'
+                      ? '子供としての画面が表示されます。'
+                      : '保護者としての画面が表示されます。'
+                  }
+                </p>
+
+                <div style={{display:'flex', gap:'0.75rem'}}>
+                  <button
+                    onClick={() => setShowSwitchModal(false)}
+                    style={{
+                      flex: 1, padding: '0.875rem',
+                      background: '#f0f0f0', color: '#666',
+                      border: 'none', borderRadius: 14,
+                      fontSize: 15, fontWeight: 700, cursor: 'pointer'
+                    }}
+                  >
+                    キャンセル
+                  </button>
+                  <button
+                    onClick={async () => {
+                      setShowSwitchModal(false);
+                      try {
+                        const newRole = switchTarget.mode;
+                        const { error } = await supabase
+                          .from('profiles')
+                          .update({ role: newRole })
+                          .eq('id', currentUser.id);
+                        if (error) throw error;
+
+                        if (newRole === 'child') {
+                          const { data: existing } = await supabase
+                            .from('members')
+                            .select('*')
+                            .eq('user_id', currentUser.id)
+                            .maybeSingle();
+                          if (!existing) {
+                            await supabase.from('members').insert([{
+                              user_id: currentUser.id,
+                              name: currentUser.name,
+                              status: 'safe',
+                              battery: 100,
+                              gps_enabled: false,
+                              latitude: 35.6812,
+                              longitude: 139.7671,
+                              address: '位置情報未取得',
+                              last_update: new Date().toISOString()
+                            }]);
+                          }
+                        }
+
+                        if (newRole === 'parent') {
+                          await supabase
+                            .from('members')
+                            .delete()
+                            .eq('user_id', currentUser.id);
+                          await supabase
+                            .from('parent_children')
+                            .delete()
+                            .eq('child_id', currentUser.id);
+                        }
+
+                        const newUser = { ...currentUser, role: newRole };
+                        setCurrentUser(newUser);
+                        await loadMembersData(newUser);
+                        if (newRole === 'parent') {
+                          await loadAlerts(newUser);
+                        }
+                        setCurrentView(newRole === 'parent' ? 'parent-dashboard' : 'child-dashboard');
+                        alert(`${newRole === 'parent' ? '保護者' : '子供'}に切り替えました！`);
+                      } catch (error) {
+                        alert('切り替えに失敗しました: ' + error.message);
+                      }
+                    }}
+                    style={{
+                      flex: 1, padding: '0.875rem',
+                      background: 'linear-gradient(135deg,#f59e0b,#ef4444)',
+                      color: 'white', border: 'none', borderRadius: 14,
+                      fontSize: 15, fontWeight: 700, cursor: 'pointer'
+                    }}
+                  >
+                    切り替える
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
+
       </div>
     );
   }
@@ -2031,35 +2537,138 @@ const ProfileScreen = () => {
           ))}
         </div>
 
-        {/* ── アカウント情報カード ── */}
+{/* ── アカウント情報カード ── */}
         <div style={{
           background: '#fff', borderRadius: 20, padding: '1.25rem',
           marginBottom: '1.25rem', boxShadow: '0 4px 16px rgba(0,0,0,.07)',
         }}>
-          <p style={{ margin: '0 0 .75rem', fontSize: 11, fontWeight: 700, color: '#aaa', textTransform: 'uppercase', letterSpacing: 1 }}>
-            アカウント情報
-          </p>
-          {[
-            { icon: <User size={17} color="#667eea" />, label: '名前', value: currentUser?.name },
-            { icon: <Mail size={17} color="#ec4899" />, label: 'メールアドレス', value: currentUser?.email },
-            currentUser?.phone && { icon: <Phone size={17} color="#22c55e" />, label: '電話番号', value: currentUser.phone },
-            { icon: <Shield size={17} color="#f59e0b" />, label: 'アカウント種別', value: '保護者' },
-          ].filter(Boolean).map((row, i, arr) => (
-            <div key={i}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '.75rem 0' }}>
-                <div style={{
-                  width: 38, height: 38, borderRadius: 11,
-                  background: '#f4f5ff', flexShrink: 0,
-                  display: 'flex', alignItems: 'center', justifyContent: 'center',
-                }}>{row.icon}</div>
-                <div style={{ flex: 1, minWidth: 0 }}>
-                  <p style={{ margin: 0, fontSize: 11, color: '#bbb', fontWeight: 600 }}>{row.label}</p>
-                  <p style={{ margin: 0, fontSize: 14, color: '#222', fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{row.value}</p>
-                </div>
+          <div style={{display:'flex', alignItems:'center', justifyContent:'space-between', marginBottom:'.75rem'}}>
+            <p style={{ margin: 0, fontSize: 11, fontWeight: 700, color: '#aaa', textTransform: 'uppercase', letterSpacing: 1 }}>
+              アカウント情報
+            </p>
+            <button
+              onClick={() => {
+                setEditForm({ name: currentUser?.name || '', phone: currentUser?.phone || '' });
+                setEditing(!editing);
+              }}
+              style={{
+                background: editing ? '#f0f0f0' : 'linear-gradient(135deg,#667eea,#764ba2)',
+                color: editing ? '#666' : 'white',
+                border: 'none', borderRadius: 20, padding: '4px 14px',
+                fontSize: 13, fontWeight: 700, cursor: 'pointer'
+              }}
+            >
+              {editing ? 'キャンセル' : '編集'}
+            </button>
+          </div>
+
+          {editing ? (
+            <div style={{display:'flex', flexDirection:'column', gap:'0.875rem'}}>
+              <div>
+                <label style={{fontSize:12, color:'#aaa', fontWeight:600, display:'block', marginBottom:4}}>名前</label>
+                <input
+                  type="text"
+                  value={editForm.name}
+                  onChange={e => setEditForm({...editForm, name: e.target.value})}
+                  style={{
+                    width:'100%', padding:'0.75rem', border:'2px solid #667eea',
+                    borderRadius:12, fontSize:14, outline:'none', boxSizing:'border-box'
+                  }}
+                />
               </div>
-              {i < arr.length - 1 && <div style={{ height: 1, background: '#f4f4f4' }} />}
+    <div style={{height:1, background:'#f0f0f0'}} />
+    <p style={{margin:0, fontSize:11, color:'#aaa', fontWeight:700, textTransform:'uppercase', letterSpacing:1}}>
+      メール・パスワード変更
+    </p>
+    <div>
+      <label style={{fontSize:12, color:'#aaa', fontWeight:600, display:'block', marginBottom:4}}>メールアドレス</label>
+      <input
+        type="email"
+        value={editForm.email}
+        onChange={e => setEditForm({...editForm, email: e.target.value})}
+        style={{
+          width:'100%', padding:'0.75rem', border:'2px solid #e0e0e0',
+          borderRadius:12, fontSize:14, outline:'none', boxSizing:'border-box'
+        }}
+      />
+    </div>
+    <div>
+      <label style={{fontSize:12, color:'#aaa', fontWeight:600, display:'block', marginBottom:4}}>新しいパスワード（変更する場合のみ）</label>
+      <input
+        type="password"
+        value={editForm.newPassword}
+        onChange={e => setEditForm({...editForm, newPassword: e.target.value})}
+        placeholder="6文字以上"
+        style={{
+          width:'100%', padding:'0.75rem', border:'2px solid #e0e0e0',
+          borderRadius:12, fontSize:14, outline:'none', boxSizing:'border-box'
+        }}
+      />
+    </div>
+    <div>
+      <label style={{fontSize:12, color:'#aaa', fontWeight:600, display:'block', marginBottom:4}}>パスワード確認</label>
+      <input
+        type="password"
+        value={editForm.confirmPassword}
+        onChange={e => setEditForm({...editForm, confirmPassword: e.target.value})}
+        placeholder="パスワードを再入力"
+        style={{
+          width:'100%', padding:'0.75rem', border:'2px solid #e0e0e0',
+          borderRadius:12, fontSize:14, outline:'none', boxSizing:'border-box'
+        }}
+      />
+    </div>
+              <div>
+                <label style={{fontSize:12, color:'#aaa', fontWeight:600, display:'block', marginBottom:4}}>電話番号</label>
+                <input
+                  type="tel"
+                  value={editForm.phone}
+                  onChange={e => setEditForm({...editForm, phone: e.target.value})}
+                  placeholder="090-1234-5678"
+                  style={{
+                    width:'100%', padding:'0.75rem', border:'2px solid #e0e0e0',
+                    borderRadius:12, fontSize:14, outline:'none', boxSizing:'border-box'
+                  }}
+                />
+              </div>
+              <button
+                onClick={saveProfile}
+                disabled={saving}
+                style={{
+                  width:'100%', padding:'0.875rem',
+                  background:'linear-gradient(135deg,#667eea,#764ba2)',
+                  color:'white', border:'none', borderRadius:12,
+                  fontSize:15, fontWeight:700, cursor:'pointer'
+                }}
+              >
+                {saving ? '保存中...' : '保存する'}
+              </button>
             </div>
-          ))}
+          ) : (
+            <div>
+              {[
+                { icon: <User size={17} color="#667eea" />, label: '名前', value: currentUser?.name },
+                { icon: <Mail size={17} color="#ec4899" />, label: 'メールアドレス', value: currentUser?.email },
+                currentUser?.phone && { icon: <Phone size={17} color="#22c55e" />, label: '電話番号', value: currentUser.phone },
+                { icon: <Shield size={17} color="#f59e0b" />, label: 'アカウント種別', value: '保護者' },
+              ].filter(Boolean).map((row, i, arr) => (
+                <div key={i}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '.75rem 0' }}>
+                    <div style={{
+                      width: 38, height: 38, borderRadius: 11,
+                      background: '#f4f5ff', flexShrink: 0,
+                      display: 'flex', alignItems: 'center', justifyContent: 'center',
+                    }}>{row.icon}</div>
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <p style={{ margin: 0, fontSize: 11, color: '#bbb', fontWeight: 600 }}>{row.label}</p>
+                      <p style={{ margin: 0, fontSize: 14, color: '#222', fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{row.value}</p>
+                    </div>
+                  </div>
+                  {i < arr.length - 1 && <div style={{ height: 1, background: '#f4f4f4' }} />}
+                </div>
+              ))}
+            </div>
+          )}
         </div>
 
         {/* ── 子供一覧カード ── */}
@@ -2198,7 +2807,7 @@ const ProfileScreen = () => {
             style={{
               width: '100%', padding: '1rem',
               background: '#f4f5ff', color: '#667eea',
-              border: 'none', borderRadius: 16,
+              border: '2px solid #667eea !important', borderRadius: 16,
               fontSize: 15, fontWeight: 700, cursor: 'pointer',
               display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8,
             }}
@@ -2206,6 +2815,29 @@ const ProfileScreen = () => {
             ← ダッシュボードへ戻る
           </button>
 
+        <button
+          onClick={() => {
+          const newMode = currentUser.role === 'parent' ? 'child' : 'parent';
+              setSwitchTarget({ mode: newMode, isReturn: false });
+              setShowSwitchModal(true);
+            }}
+            style={{
+              width: '100%', padding: '1rem',
+              background: 'linear-gradient(135deg,#f59e0b,#ef4444)',
+              color: 'white', border: 'none', borderRadius: 16,
+              fontSize: 15, fontWeight: 700, cursor: 'pointer',
+              display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8,
+              transition: 'transform .15s',
+            }}
+            onMouseEnter={e => e.currentTarget.style.transform = 'translateY(-2px)'}
+            onMouseLeave={e => e.currentTarget.style.transform = ''}
+          >
+           {currentUser.role === 'parent' ? (
+              <><User size={18} /> 子供に切り替え</>
+            ) : (
+              <><Shield size={18} /> 保護者に切り替え</>
+           )}
+          </button>
           <button
             onClick={async () => {
               if (watchIdRef.current !== null) {
@@ -2233,6 +2865,129 @@ const ProfileScreen = () => {
 
         <div style={{ height: 16 }} />
       </div>
+
+      {/* ── 切り替え確認モーダル ── */}
+      {showSwitchModal && switchTarget && (
+        <div style={{
+          position: 'fixed', top: 0, left: 0, right: 0, bottom: 0,
+          background: 'rgba(0,0,0,0.5)',
+          display: 'flex', alignItems: 'center', justifyContent: 'center',
+          zIndex: 10000, padding: '1rem'
+        }}>
+          <div style={{
+            background: 'white', borderRadius: 24, padding: '2rem 1.5rem',
+            maxWidth: 340, width: '100%', textAlign: 'center',
+            boxShadow: '0 10px 40px rgba(0,0,0,0.2)'
+          }}>
+            <div style={{
+              width: 72, height: 72, borderRadius: '50%',
+              background: switchTarget.isReturn ? '#ede9fe' : '#fef3c7',
+              display: 'flex', alignItems: 'center', justifyContent: 'center',
+              margin: '0 auto 1.25rem'
+            }}>
+              {switchTarget.isReturn
+                ? <ChevronRight size={36} color="#667eea" style={{transform:'rotate(180deg)'}} />
+                : switchTarget.mode === 'child'
+                  ? <User size={36} color="#f59e0b" />
+                  : <Shield size={36} color="#f59e0b" />
+              }
+            </div>
+            <h2 style={{margin:'0 0 0.75rem', fontSize:'1.25rem', fontWeight:800, color:'#1a1a2e'}}>
+              {switchTarget.isReturn
+                ? '元の画面に戻りますか？'
+                : switchTarget.mode === 'child'
+                  ? '子供画面に切り替えますか？'
+                  : '保護者画面に切り替えますか？'
+              }
+            </h2>
+            <p style={{margin:'0 0 1.5rem', fontSize:'0.9rem', color:'#666', lineHeight:1.6}}>
+              {switchTarget.isReturn
+                ? `元の${currentUser.role === 'parent' ? '保護者' : '子供'}画面に戻ります。`
+                : switchTarget.mode === 'child'
+                  ? '子供としての画面が表示されます。'
+                  : '保護者としての画面が表示されます。'
+              }
+            </p>
+            <div style={{display:'flex', gap:'0.75rem'}}>
+<button
+                    onClick={() => setShowSwitchModal(false)}
+                    style={{
+                      flex: 1, padding: '0.875rem',
+                      background: '#f0f0f0', color: '#666',
+                      border: 'none', borderRadius: 14,
+                      fontSize: 15, fontWeight: 700, cursor: 'pointer'
+                    }}
+                  >
+                    キャンセル
+                  </button>
+                  <button
+                    onClick={async () => {
+                      setShowSwitchModal(false);
+                      try {
+                        const newRole = switchTarget.mode;
+                        const { error } = await supabase
+                          .from('profiles')
+                          .update({ role: newRole })
+                          .eq('id', currentUser.id);
+                        if (error) throw error;
+
+                        if (newRole === 'child') {
+                          const { data: existing } = await supabase
+                            .from('members')
+                            .select('*')
+                            .eq('user_id', currentUser.id)
+                            .maybeSingle();
+                          if (!existing) {
+                            await supabase.from('members').insert([{
+                              user_id: currentUser.id,
+                              name: currentUser.name,
+                              status: 'safe',
+                              battery: 100,
+                              gps_enabled: false,
+                              latitude: 35.6812,
+                              longitude: 139.7671,
+                              address: '位置情報未取得',
+                              last_update: new Date().toISOString()
+                            }]);
+                          }
+                        }
+
+                        if (newRole === 'parent') {
+                          await supabase
+                            .from('members')
+                            .delete()
+                            .eq('user_id', currentUser.id);
+                          await supabase
+                            .from('parent_children')
+                            .delete()
+                            .eq('child_id', currentUser.id);
+                        }
+
+                        const newUser = { ...currentUser, role: newRole };
+                        setCurrentUser(newUser);
+                        await loadMembersData(newUser);
+                        if (newRole === 'parent') {
+                          await loadAlerts(newUser);
+                        }
+                        setCurrentView(newRole === 'parent' ? 'parent-dashboard' : 'child-dashboard');
+                        alert(`${newRole === 'parent' ? '保護者' : '子供'}に切り替えました！`);
+                      } catch (error) {
+                        alert('切り替えに失敗しました: ' + error.message);
+                      }
+                    }}
+                    style={{
+                      flex: 1, padding: '0.875rem',
+                      background: 'linear-gradient(135deg,#f59e0b,#ef4444)',
+                      color: 'white', border: 'none', borderRadius: 14,
+                      fontSize: 15, fontWeight: 700, cursor: 'pointer'
+                    }}
+                  >
+                    切り替える
+                  </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };
@@ -2307,9 +3062,39 @@ const handleAddChild = async () => {
       return;
     }
 
-    setSuccess(`${profile.name} を登録しました！`);
+setSuccess(`${profile.name} を登録しました！`);
     setChildId('');
-    await loadMembersData(currentUser);
+
+    const { data: memberData } = await supabase
+      .from('members')
+      .select('*')
+      .eq('user_id', profile.id)
+      .maybeSingle();
+
+    if (memberData) {
+      console.log('memberData found:', memberData);
+      setMembers(prev => [...prev, {
+        id: memberData.id,
+        userId: memberData.user_id,
+        name: profile.name,
+        avatar: profile.avatar_url ? null : 'C',
+        avatar_url: profile.avatar_url,
+        status: memberData.status || 'safe',
+        battery: memberData.battery || 100,
+        gpsActive: memberData.gps_enabled || false,
+        isMoving: false,
+        location: {
+          lat: memberData.latitude || 35.6812,
+          lng: memberData.longitude || 139.7671,
+          address: memberData.address || '位置情報未取得'
+        },
+        lastUpdate: new Date(memberData.last_update || Date.now()),
+        schedule: []
+      }]);
+    }else {
+      console.log('memberData is null for user_id:', profile.id);
+    }
+
     setTimeout(() => setCurrentView('parent-dashboard'), 1500);
   } catch (e) {
     setError('エラーが発生しました: ' + e.message);
@@ -2344,7 +3129,7 @@ const handleAddChild = async () => {
                   type="text"
                   value={childId}
                   onChange={(e) => setChildId(e.target.value)}
-                  placeholder="例: 550e8400-e29b-41d4-a716-446655440000"
+                  placeholder="例: 123456"
                   disabled={loading}
                   className="url-display"
                 />
@@ -2710,10 +3495,37 @@ const GroupListScreen = () => {
             {filteredGroups.map((group, index) => (
               <div
                 key={group.id}
-                onClick={() => {
-                  sessionStorage.setItem('selectedGroupId', group.id);
-                  setCurrentView('group-chat');
-                }}
+onClick={async () => {
+  sessionStorage.setItem('selectedGroupId', group.id);
+  setGroupUnreadByGroup(prev => {
+    const next = { ...prev };
+    delete next[group.id];
+    return next;
+  });
+
+  // DBにも既読を書き込む
+  try {
+    const { data: unreadMessages } = await supabase
+      .from('group_messages')
+      .select('id')
+      .eq('group_id', group.id);
+
+    if (unreadMessages && unreadMessages.length > 0) {
+      const reads = unreadMessages.map(m => ({
+        message_id: m.id,
+        user_id: currentUser.id,
+        read_at: new Date().toISOString()
+      }));
+      await supabase
+        .from('group_message_reads')
+        .upsert(reads, { onConflict: 'message_id,user_id' });
+    }
+  } catch (e) {
+    console.error('Mark group read error:', e);
+  }
+
+  setCurrentView('group-chat');
+}}
                 style={{
                   padding: '1rem 1.25rem',
                   cursor: 'pointer',
@@ -2764,28 +3576,28 @@ const GroupListScreen = () => {
                       <Users size={28} style={{color: 'white'}} />
                     )}
                   </div>
-                  {group.unreadCount > 0 && (
-                    <div style={{
-                      position: 'absolute',
-                      top: '-4px',
-                      right: '-4px',
-                      minWidth: '22px',
-                      height: '22px',
-                      borderRadius: '11px',
-                      background: '#ef4444',
-                      color: 'white',
-                      fontSize: '0.7rem',
-                      fontWeight: '700',
-                      display: 'flex',
-                      alignItems: 'center',
-                      justifyContent: 'center',
-                      padding: '0 0.35rem',
-                      border: '2px solid white',
-                      boxShadow: '0 2px 4px rgba(239, 68, 68, 0.3)'
-                    }}>
-                      {group.unreadCount > 99 ? '99+' : group.unreadCount}
-                    </div>
-                  )}
+{groupUnreadByGroup[group.id] > 0 && (
+  <div style={{
+    position: 'absolute',
+    top: '-4px',
+    right: '-4px',
+    minWidth: '22px',
+    height: '22px',
+    borderRadius: '11px',
+    background: '#ef4444',
+    color: 'white',
+    fontSize: '0.7rem',
+    fontWeight: '700',
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    padding: '0 0.35rem',
+    border: '2px solid white',
+    boxShadow: '0 2px 4px rgba(239, 68, 68, 0.3)'
+  }}>
+    {groupUnreadByGroup[group.id] > 99 ? '99+' : groupUnreadByGroup[group.id]}
+  </div>
+)}
                 </div>
 
                 <div style={{
@@ -4084,7 +4896,7 @@ const saveEditMessage = async () => {
     }
   };
 
-  const loadGroupMessages = async () => {
+const loadGroupMessages = async () => {
     try {
       const { data, error } = await supabase
         .from('group_messages')
@@ -5671,36 +6483,43 @@ useEffect(() => {
   return () => document.removeEventListener('mousedown', handleOutsideClick);
 }, []);
 
-  const loadHistory = async (targetUserId) => {
-    if (!currentUser?.id) return;
-    try {
-      const { data } = await supabase
-        .from('messages')
-        .select('*')
-        .or(
-          `and(from_user_id.eq.${currentUser.id},to_user_id.eq.${targetUserId}),` +
-          `and(from_user_id.eq.${targetUserId},to_user_id.eq.${currentUser.id})`
-        )
-        .order('created_at', { ascending: true });
+const loadHistory = async (targetUserId) => {
+  if (!currentUser?.id) return;
+  try {
+    const { data } = await supabase
+      .from('messages')
+      .select('*')
+      .or(
+        `and(from_user_id.eq.${currentUser.id},to_user_id.eq.${targetUserId}),` +
+        `and(from_user_id.eq.${targetUserId},to_user_id.eq.${currentUser.id})`
+      )
+      .order('created_at', { ascending: true });
 
-      if (data) {
-        const unread = data.filter(m => m.to_user_id === currentUser.id && !m.read);
-        if (unread.length > 0) {
-          await supabase
-            .from('messages')
-            .update({ read: true })
-            .in('id', unread.map(m => m.id));
-        }
-        setChatMessages(data.map(m => ({
-          id: m.id, from: m.from_user_id, to: m.to_user_id,
-          text: m.text, timestamp: new Date(m.created_at),
-          read: m.to_user_id === currentUser.id ? true : m.read,
-          edited: m.edited || false,
-          editedAt: m.edited_at ? new Date(m.edited_at) : null,
-        })));
+    if (data) {
+      const unread = data.filter(m => m.to_user_id === currentUser.id && !m.read);
+      if (unread.length > 0) {
+        await supabase
+          .from('messages')
+          .update({ read: true })
+          .in('id', unread.map(m => m.id));
+
+        // ← これを追加: 親のmessagesステートも既読に更新
+        setMessages(prev => prev.map(m =>
+          m.to === currentUser.id && m.from === targetUserId
+            ? { ...m, read: true }
+            : m
+        ));
       }
-    } catch (e) { console.error('loadHistory error:', e); }
-  };
+      setChatMessages(data.map(m => ({
+        id: m.id, from: m.from_user_id, to: m.to_user_id,
+        text: m.text, timestamp: new Date(m.created_at),
+        read: m.to_user_id === currentUser.id ? true : m.read,
+        edited: m.edited || false,
+        editedAt: m.edited_at ? new Date(m.edited_at) : null,
+      })));
+    }
+  } catch (e) { console.error('loadHistory error:', e); }
+};
 
   const subscribeMessages = (targetUserId) => {
     const ch = supabase
@@ -6370,9 +7189,14 @@ useEffect(() => {
             <p>{currentUser?.name}</p>
           </div>
           <div className="header-right">
-            <button className="icon-btn" onClick={() => setCurrentView('group-list')} title="グループチャット">
-              <Users size={20} />
-            </button>
+<button className="icon-btn" onClick={() => setCurrentView('group-list')} title="グループチャット" style={{position:'relative'}}>
+  <Users size={20} />
+  {Object.values(groupUnreadByGroup).reduce((a, b) => a + b, 0) > 0 && (
+    <span className="badge">
+      {Object.values(groupUnreadByGroup).reduce((a, b) => a + b, 0)}
+    </span>
+  )}
+</button>
             {displayMember && (
               <button 
                 className="icon-btn" 
@@ -7247,32 +8071,37 @@ useEffect(() => {
   return () => document.removeEventListener('mousedown', handleOutsideClick);
 }, []);
 
-  const loadHistory = async (parentId) => {
-    if (!currentUser?.id) return;
-    try {
-      const { data } = await supabase
-        .from('messages')
-        .select('*')
-        .or(
-          `and(from_user_id.eq.${currentUser.id},to_user_id.eq.${parentId}),` +
-          `and(from_user_id.eq.${parentId},to_user_id.eq.${currentUser.id})`
-        )
-        .order('created_at', { ascending: true });
-      if (data) {
-        const unread = data.filter(m => m.to_user_id === currentUser.id && !m.read);
-        if (unread.length > 0) {
-          await supabase.from('messages').update({ read: true }).in('id', unread.map(m => m.id));
-        }
-        setChatMessages(data.map(m => ({
-          id: m.id, from: m.from_user_id, to: m.to_user_id,
-          text: m.text, timestamp: new Date(m.created_at),
-          read: m.to_user_id === currentUser.id ? true : m.read,
-          edited: m.edited || false,
-          editedAt: m.edited_at ? new Date(m.edited_at) : null,
-        })));
+const loadHistory = async (parentId) => {
+  if (!currentUser?.id) return;
+  try {
+    const { data } = await supabase
+      .from('messages')
+      .select('*')
+      .or(
+        `and(from_user_id.eq.${currentUser.id},to_user_id.eq.${parentId}),` +
+        `and(from_user_id.eq.${parentId},to_user_id.eq.${currentUser.id})`
+      )
+      .order('created_at', { ascending: true });
+    if (data) {
+      const unread = data.filter(m => m.to_user_id === currentUser.id && !m.read);
+      if (unread.length > 0) {
+        await supabase.from('messages').update({ read: true }).in('id', unread.map(m => m.id));
+        setChildUnreadByParent(prev => {
+          const next = { ...prev };
+          delete next[parentId];
+          return next;
+      });
       }
-    } catch (e) { console.error(e); }
-  };
+      setChatMessages(data.map(m => ({
+        id: m.id, from: m.from_user_id, to: m.to_user_id,
+        text: m.text, timestamp: new Date(m.created_at),
+        read: m.to_user_id === currentUser.id ? true : m.read,
+        edited: m.edited || false,
+        editedAt: m.edited_at ? new Date(m.edited_at) : null,
+      })));
+    }
+  } catch (e) { console.error(e); }
+};
 
   const subscribeMessages = (parentId) => {
     const ch = supabase
@@ -7673,7 +8502,7 @@ const saveEdit = async () => {
           </div>
         </div>
 
-        <div style={{background:'white',margin:'0 1rem',borderRadius:'16px',overflow:'hidden',boxShadow:'0 4px 16px rgba(0,0,0,0.15)'}}>
+<div style={{background:'white',margin:'0 1rem',borderRadius:'16px',overflow:'hidden',boxShadow:'0 4px 16px rgba(0,0,0,0.15)'}}>
           {parents.map((parent, i) => (
             <div key={parent.id} onClick={() => openChat(parent)}
               style={{
@@ -7703,9 +8532,21 @@ const saveEdit = async () => {
               <div style={{
                 display:'flex',alignItems:'center',gap:'0.4rem',padding:'0.5rem 1rem',
                 background:'linear-gradient(135deg,#667eea,#764ba2)',
-                color:'white',borderRadius:'20px',fontSize:'0.85rem',fontWeight:'600',flexShrink:0
+                color:'white',borderRadius:'20px',fontSize:'0.85rem',fontWeight:'600',flexShrink:0,
+                position:'relative'
               }}>
                 <MessageCircle size={15} /> チャット
+                {childUnreadByParent[parent.id] > 0 && (
+                  <span style={{
+                    position:'absolute',top:'-6px',right:'-6px',
+                    minWidth:'18px',height:'18px',borderRadius:'9px',
+                    background:'#ef4444',color:'white',fontSize:'0.7rem',
+                    fontWeight:'700',display:'flex',alignItems:'center',
+                    justifyContent:'center',padding:'0 4px',border:'2px solid white',
+                  }}>
+                    {childUnreadByParent[parent.id]}
+                  </span>
+                )}
               </div>
             </div>
           ))}
@@ -7796,7 +8637,7 @@ const saveEdit = async () => {
 
     // ID共有
     const handleShareID = async () => {
-      const id = currentUser?.id;
+      const id = currentUser?.short_id;
       if (!id) return;
       if (navigator.share) {
         try {
@@ -7814,7 +8655,7 @@ const saveEdit = async () => {
 
     const copyID = async () => {
       try {
-        await navigator.clipboard.writeText(currentUser?.id || '');
+        await navigator.clipboard.writeText(currentUser?.short_id || '');
         alert('IDをコピーしました！');
       } catch (e) {
         alert('コピーに失敗しました。手動でコピーしてください。');
@@ -7852,30 +8693,57 @@ const saveEdit = async () => {
       );
     }
 
-    return (
-      <div className="child-dashboard">
-        <header className="child-header">
-          <h1>Family Safe</h1>
-          <div className="child-header-buttons">
-            <button className="group-btn" onClick={() => setCurrentView('group-list')}>
-              <Users size={18} /> グループ
-            </button>
-            <button className="parent-btn" onClick={handleParentBtnClick}>
-              <MessageCircle size={18} /> 保護者
-              {parents.length > 1 && (
-                <span style={{background:'rgba(255,255,255,0.35)',borderRadius:'10px',padding:'1px 6px',fontSize:'0.72rem',fontWeight:'700',marginLeft:'2px'}}>
-                  {parents.length}
-                </span>
-              )}
-            </button>
-            <button className="id-btn" onClick={() => setShowIDModal(true)}>
-              <User size={18} /> ID確認
-            </button>
-            <button className="profile-btn" onClick={() => setCurrentView('profile')}>
-              <Settings size={18} />
-            </button>
-          </div>
-        </header>
+// ChildDashboard の return の直前に置く
+const totalUnread = Object.values(childUnreadByParent).reduce((a, b) => a + b, 0);
+
+return (
+  <div className="child-dashboard">
+    <header className="child-header">
+      <h1>Family Safe</h1>
+      <div className="child-header-buttons">
+<button className="group-btn" onClick={() => setCurrentView('group-list')} style={{position:'relative'}}>
+  <Users size={18} /> グループ
+  {Object.values(groupUnreadByGroup).reduce((a, b) => a + b, 0) > 0 && (
+    <span style={{
+      position:'absolute',top:'-6px',right:'-6px',
+      minWidth:'18px',height:'18px',borderRadius:'9px',
+      background:'#ef4444',color:'white',fontSize:'0.7rem',
+      fontWeight:'700',display:'flex',alignItems:'center',
+      justifyContent:'center',padding:'0 4px',border:'2px solid white',
+    }}>
+      {Object.values(groupUnreadByGroup).reduce((a, b) => a + b, 0)}
+    </span>
+  )}
+</button>
+
+        <button className="parent-btn" onClick={handleParentBtnClick} style={{position: 'relative'}}>
+          <MessageCircle size={18} /> 保護者
+          {parents.length > 1 && (
+            <span style={{background:'rgba(255,255,255,0.35)',borderRadius:'10px',padding:'1px 6px',fontSize:'0.72rem',fontWeight:'700',marginLeft:'2px'}}>
+              {parents.length}
+            </span>
+          )}
+          {totalUnread > 0 && (
+            <span style={{
+              position: 'absolute', top: '-6px', right: '-6px',
+              minWidth: '18px', height: '18px', borderRadius: '9px',
+              background: '#ef4444', color: 'white', fontSize: '0.7rem',
+              fontWeight: '700', display: 'flex', alignItems: 'center',
+              justifyContent: 'center', padding: '0 4px', border: '2px solid white',
+            }}>
+              {totalUnread > 99 ? '99+' : totalUnread}
+            </span>
+          )}
+        </button>
+
+        <button className="id-btn" onClick={() => setShowIDModal(true)}>
+          <User size={18} /> ID確認
+        </button>
+        <button className="profile-btn" onClick={() => setCurrentView('profile')}>
+          <Settings size={18} />
+        </button>
+      </div>
+    </header>
 
         <div className="child-content">
           {/* ステータス */}
@@ -7933,12 +8801,12 @@ const saveEdit = async () => {
                 </>
               ) : (
                 <button className="gps-toggle active">
-                  <Navigation size={20} /> GPS追跡中...
+                  <Navigation size={20} /> GPS追跡中（保護者が制御中）
                 </button>
               )}
             </div>
             <p style={{fontSize:'0.85rem',color:'#999',marginTop:'0.75rem',textAlign:'center'}}>
-              {gpsEnabled ? '保護者があなたの位置を追跡しています' : '位置情報を共有すると保護者が確認できます'}
+              {gpsEnabled && <p style={{fontSize: '0.85rem', color: '#666', textAlign: 'center', marginTop: '0.5rem'}}><i className="fas fa-info-circle"></i> GPS追跡は保護者のみが停止できます</p>}
             </p>
           </div>
 
