@@ -753,7 +753,7 @@ useEffect(() => {
       )
       .subscribe();
 
-    if (Notification.permission === 'default') {
+    if ('Notification' in window && Notification.permission === 'granted') {
       Notification.requestPermission();
     }
 
