@@ -645,7 +645,7 @@ useEffect(() => {
             }];
           });
           
-          if (Notification.permission === 'granted') {
+          if ('Notification' in window && Notification.permission === 'granted') {
             const notification = new Notification('Family Safe - 新着メッセージ', {
               body: `${senderName}: ${payload.new.text}`,
               icon: '/favicon.ico',
@@ -740,7 +740,7 @@ useEffect(() => {
                   read: payload.new.read || false
                 }, ...prev]);
                 
-                if (Notification.permission === 'granted') {
+                if ('Notification' in window && Notification.permission === 'granted') {
                   new Notification('Family Safe - 緊急アラート', {
                     body: payload.new.message,
                     requireInteraction: true
@@ -873,7 +873,7 @@ useEffect(() => {
         .update({ gps_enabled: true })
         .eq('id', memberId);
       
-      if (Notification.permission === 'granted') {
+      if ('Notification' in window && Notification.permission === 'granted') {
         const member = members.find(m => m.id === memberId);
         new Notification('Family Safe', {
           body: `${member?.name || '子供'}のGPS追跡を開始しました`
