@@ -5973,6 +5973,14 @@ const saveEdit = async () => {
   );
 };
 
+useEffect(() => {
+  const handleError = (event) => {
+    alert('エラー: ' + event.message + '\n場所: ' + event.filename + ':' + event.lineno);
+  };
+  window.addEventListener('error', handleError);
+  return () => window.removeEventListener('error', handleError);
+}, []);
+
 // 保護者ダッシュボード
   const ParentDashboard = () => {
     const [selectedMemberId, setSelectedMemberId] = useState(null);
