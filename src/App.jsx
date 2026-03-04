@@ -954,11 +954,13 @@ useEffect(() => {
             const newGpsActive = payload.new.gps_enabled;
             const newLat = payload.new.latitude;
             const newLng = payload.new.longitude;
-            
+            const newBattery = payload.new.battery;
+
             if (current.gpsActive === newGpsActive && 
-                current.location.lat === newLat && 
-                current.location.lng === newLng) {
-              return prev; // ★ 何も変わっていないので更新しない
+              current.location.lat === newLat && 
+              current.location.lng === newLng &&
+              current.battery === newBattery) { 
+            return prev;
             }
             
             // 変更がある場合のみ更新
@@ -8107,4 +8109,3 @@ const saveEdit = async () => {
 };
 
 export default App
-
