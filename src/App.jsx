@@ -6013,18 +6013,38 @@ const saveEdit = async () => {
     }, [selectedMemberId, members]);
 
     // Leaflet Map useEffect
-    useEffect(() => {
-      if (activeTab !== 'map' || !displayMember || typeof window.L === 'undefined') {
+useEffect(() => {
+  if (activeTab !== 'map' || !displayMember) {
+    return;
+  }
+
+  // Leafletの読み込みを待つ
+  let retryCount = 0;
+  const maxRetry = 20;
+  
+  const initMap = () => {
+    try {
+      if (typeof window.L === 'undefined') {
+        retryCount++;
+        if (retryCount < maxRetry) {
+          setTimeout(initMap, 300);
+        }
         return;
       }
 
       const mapContainer = document.getElementById('map');
-      if (!mapContainer) return;
-      
+      if (!mapContainer) {
+        retryCount++;
+        if (retryCount < maxRetry) {
+          setTimeout(initMap, 300);
+        }
+        return;
+      }
+
       mapContainer.innerHTML = '';
 
       const map = window.L.map('map').setView(
-        [displayMember.location.lat, displayMember.location.lng], 
+        [displayMember.location.lat, displayMember.location.lng],
         15
       );
 
@@ -6033,7 +6053,7 @@ const saveEdit = async () => {
         maxZoom: 19
       }).addTo(map);
 
-      const avatarContent = displayMember.avatarUrl 
+      const avatarContent = displayMember.avatarUrl
         ? `<img src="${displayMember.avatarUrl}" style="width: 100%; height: 100%; object-fit: cover; border-radius: 50%;" />`
         : `<span style="color: #667eea; font-weight: 700; font-size: 20px;">${displayMember.avatar}</span>`;
 
@@ -6070,10 +6090,29 @@ const saveEdit = async () => {
         </div>
       `);
 
-      return () => {
-        map.remove();
-      };
-    }, [activeTab, displayMember?.location.lat, displayMember?.location.lng]);
+      // クリーンアップ用にmapを返す
+      mapContainer._leafletMap = map;
+
+    } catch (error) {
+      console.error('Map initialization error:', error);
+      // エラーが起きても画面はクラッシュさせない
+    }
+  };
+
+  initMap();
+
+  return () => {
+    try {
+      const mapContainer = document.getElementById('map');
+      if (mapContainer && mapContainer._leafletMap) {
+        mapContainer._leafletMap.remove();
+        mapContainer._leafletMap = null;
+      }
+    } catch (e) {
+      console.error('Map cleanup error:', e);
+    }
+  };
+}, [activeTab, displayMember?.location.lat, displayMember?.location.lng]);
 
     useEffect(() => {
       if (!selectedMemberId && members.length > 0) {
@@ -7900,3 +7939,4 @@ const saveEdit = async () => {
 };
 
 export default App
+
