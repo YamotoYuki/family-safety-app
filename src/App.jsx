@@ -49,7 +49,7 @@ const App = () => {
   const [groupMessages, setGroupMessages] = useState([]);
   const [alerts, setAlerts] = useState([]);
   const [gpsEnabled, setGpsEnabled] = useState(false);
-  const [batteryLevel, setBatteryLevel] = useState(100);
+  const [batteryLevel, setBatteryLevel] = useState(null);
   const watchIdRef = useRef(null);
   const loadingRef = useRef(false);
   const batteryIntervalRef = useRef(null);
@@ -70,6 +70,31 @@ const App = () => {
       console.error('Update presence error:', error);
     }
   };
+
+  useEffect(() => {
+  const updateBattery = async () => {
+    if ('getBattery' in navigator) {
+      try {
+        const battery = await navigator.getBattery();
+        const level = Math.round(battery.level * 100);
+        setBatteryLevel(level);
+
+        // ← 追加: 充電状態が変わったときも更新
+        battery.onlevelchange = () => {
+          setBatteryLevel(Math.round(battery.level * 100));
+        };
+
+      } catch (error) {
+        console.error('Battery API error:', error);
+        setBatteryLevel(null); // ← 追加
+      }
+    } else {
+      setBatteryLevel(null); // ← 追加: iOSなど非対応の場合
+    }
+  };
+  updateBattery();
+  // インターバルは不要になるので削除してもOK
+}, [currentUser]);
 
   // URLハッシュを見て初期画面を決める（QRコード読み取り対応）
 useEffect(() => {
@@ -1833,7 +1858,7 @@ const ProfileScreen = () => {
           <div className="child-info-grid">
             <div className="info-box">
               <Battery size={22} color={batteryColor} className="info-icon" />
-              <div><h3>バッテリー</h3><div className="info-value" style={{ color: batteryColor }}>{myProfile?.battery ?? batteryLevel}%</div></div>
+              <div><h3>バッテリー</h3><div className="info-value" style={{ color: batteryColor }}>{myProfile?.battery != null ? `${myProfile.battery}%` : '不明'}</div></div>
             </div>
             <div className="info-box">
               <Navigation size={22} color={gpsEnabled ? '#667eea' : '#aaa'} className="info-icon" />
@@ -8082,3 +8107,4 @@ const saveEdit = async () => {
 };
 
 export default App
+
