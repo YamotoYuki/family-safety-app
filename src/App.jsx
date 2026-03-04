@@ -72,13 +72,19 @@ const App = () => {
   };
 
   // URLハッシュを見て初期画面を決める（QRコード読み取り対応）
-  useEffect(() => {
-    const hash = window.location.hash;
-    if (hash === '#register') {
-      setCurrentView('register');
-      window.history.replaceState(null, '', window.location.pathname);
-    }
-  }, []);
+useEffect(() => {
+  const hash = window.location.hash;
+  if (hash === '#register') {
+    setCurrentView('register');
+const pendingShortId = sessionStorage.getItem('pendingAddShortId');
+  }
+  // QRコードからの追加処理
+  if (hash.startsWith('#add-')) {
+    const shortId = hash.replace('#add-', '');
+    sessionStorage.setItem('pendingAddShortId', shortId);
+    window.history.replaceState(null, '', window.location.pathname);
+  }
+}, []);
 
   useEffect(() => {
     if (!currentUser?.id) return;
@@ -159,6 +165,89 @@ useEffect(() => {
     };
   }, [currentUser, members]);
 
+  // 保護者が子供をshort_idで追加
+const handleAddByShortId = async (user, shortId) => {
+  try {
+    const { data: profile, error } = await supabase
+      .from('profiles')
+      .select('*')
+      .eq('short_id', shortId)
+      .maybeSingle();
+
+    if (error || !profile) {
+      alert('ユーザーが見つかりませんでした（ID: ' + shortId + '）');
+      return;
+    }
+    if (profile.role !== 'child') {
+      alert('このIDは子供アカウントではありません');
+      return;
+    }
+
+    const { data: existing } = await supabase
+      .from('parent_children')
+      .select('*')
+      .eq('parent_id', user.id)
+      .eq('child_id', profile.id)
+      .maybeSingle();
+
+    if (existing) {
+      alert(`${profile.name} は既に登録済みです`);
+      return;
+    }
+
+    await supabase.from('parent_children').insert([{
+      parent_id: user.id,
+      child_id: profile.id
+    }]);
+
+    alert(`${profile.name} を家族に追加しました！`);
+    await loadMembersData(user);
+  } catch (e) {
+    console.error('handleAddByShortId error:', e);
+  }
+};
+
+// 子供が保護者をshort_idで追加
+const handleAddParentByShortId = async (user, shortId) => {
+  try {
+    const { data: profile, error } = await supabase
+      .from('profiles')
+      .select('*')
+      .eq('short_id', shortId)
+      .maybeSingle();
+
+    if (error || !profile) {
+      alert('ユーザーが見つかりませんでした（ID: ' + shortId + '）');
+      return;
+    }
+    if (profile.role !== 'parent') {
+      alert('このIDは保護者アカウントではありません');
+      return;
+    }
+
+    const { data: existing } = await supabase
+      .from('parent_children')
+      .select('*')
+      .eq('parent_id', profile.id)
+      .eq('child_id', user.id)
+      .maybeSingle();
+
+    if (existing) {
+      alert(`${profile.name} は既に登録済みです`);
+      return;
+    }
+
+    await supabase.from('parent_children').insert([{
+      parent_id: profile.id,
+      child_id: user.id
+    }]);
+
+    alert(`${profile.name} と家族でつながりました！`);
+  } catch (e) {
+    console.error('handleAddParentByShortId error:', e);
+  }
+};
+
   // 認証状態の監視
   useEffect(() => {
     let isMounted = true;
@@ -188,7 +277,7 @@ useEffect(() => {
     };
   }, []);
 
-  // ユーザープロフィール読み込み
+// ユーザープロフィール読み込み
   const loadUserProfile = async (authUser) => {
     if (loadingRef.current) return;
     loadingRef.current = true;
@@ -208,11 +297,21 @@ useEffect(() => {
           role: data.role,
           phone: data.phone,
           avatar: data.role === 'parent' ? 'P' : 'C',
-          avatar_url: data.avatar_url
+          avatar_url: data.avatar_url,
+          short_id: data.short_id
         };
         setCurrentUser(user);
         setCurrentView(user.role === 'parent' ? 'parent-dashboard' : 'child-dashboard');
-        
+
+        const pendingShortId = sessionStorage.getItem('pendingAddShortId');
+        if (pendingShortId && user.role === 'parent') {
+          sessionStorage.removeItem('pendingAddShortId');
+          await handleAddByShortId(user, pendingShortId);
+        } else if (pendingShortId && user.role === 'child') {
+          sessionStorage.removeItem('pendingAddShortId');
+          await handleAddParentByShortId(user, pendingShortId);
+        }
+
         if (user.role === 'parent') {
           await loadMembersData(user);
           await loadAlerts(user);
@@ -1327,6 +1426,8 @@ useEffect(() => {
     );
   };
 
+  
+
   // 新規登録画面
   const RegisterScreen = () => {
     const [formData, setFormData] = useState({
@@ -1369,16 +1470,18 @@ useEffect(() => {
         return;
       }
 
-      if (authData.user) {
-      const { error: profileError } = await supabase
-      .from('profiles')
-      .upsert([{
-        id: authData.user.id,
-        name: formData.name,
-        role: formData.role,
-        phone: formData.phone,
-        email: formData.email,
-      }]);
+// 修正後
+const { data: shortIdData } = await supabase.rpc('generate_unique_short_id');
+const { error: profileError } = await supabase
+  .from('profiles')
+  .upsert([{
+    id: authData.user.id,
+    name: formData.name,
+    role: formData.role,
+    phone: formData.phone,
+    email: formData.email,
+    short_id: shortIdData,
+  }]);
 
         if (profileError) {
           setError('プロファイルの保存に失敗しました');
@@ -1398,9 +1501,7 @@ useEffect(() => {
 
         alert('登録が完了しました！');
         setCurrentView('login');
-      }
-
-      setLoading(false);
+        setLoading(false);
     };
 
     return (
@@ -1531,15 +1632,17 @@ useEffect(() => {
       setLoading(true);
       setError('');
 
-      const { error: profileError } = await supabase
-        .from('profiles')
-        .upsert([{
-          id: currentUser.id,
-          name: name,
-          role: selectedRole,
-          phone: phone,
-          email: currentUser.email,
-        }]);
+const { data: shortIdData } = await supabase.rpc('generate_unique_short_id');
+const { error: profileError } = await supabase
+  .from('profiles')
+  .upsert([{
+    id: currentUser.id,
+    name: name,
+    role: selectedRole,
+    phone: phone,
+    email: currentUser.email,
+    short_id: shortIdData,
+  }]);
 
       if (profileError) {
         setError('登録に失敗しました: ' + profileError.message);
@@ -1998,6 +2101,36 @@ const ProfileScreen = () => {
           </div>
         )}
 
+        {/* 保護者のQRコード表示カード */}
+{currentUser?.short_id && (
+  <div style={{
+    background: '#fff', borderRadius: 20, padding: '1.25rem',
+    marginBottom: '1.25rem', boxShadow: '0 4px 16px rgba(0,0,0,.07)',
+    textAlign: 'center'
+  }}>
+    <p style={{margin: '0 0 .75rem', fontSize: 11, fontWeight: 700, color: '#aaa', textTransform: 'uppercase', letterSpacing: 1}}>
+      あなたのID（子供に読み取ってもらう）
+    </p>
+    <div style={{
+      fontSize: '2.5rem', fontWeight: '800', letterSpacing: '0.3em',
+      color: '#667eea', marginBottom: '1rem'
+    }}>
+      {currentUser.short_id}
+    </div>
+    <QRCodeCanvas
+      value={`${window.location.origin}/#add-${currentUser.short_id}`}
+      size={180}
+      bgColor="#ffffff"
+      fgColor="#667eea"
+      level="M"
+      includeMargin={true}
+    />
+    <p style={{fontSize:'0.8rem', color:'#999', marginTop:'0.5rem'}}>
+      子供がカメラで読み取ると自動追加されます
+    </p>
+  </div>
+)}
+
         {/* ── アクションボタン ── */}
         <div style={{ display: 'flex', flexDirection: 'column', gap: '.75rem' }}>
           <button
@@ -2083,91 +2216,80 @@ const ProfileScreen = () => {
     const [error, setError] = useState('');
     const [success, setSuccess] = useState('');
 
-    const handleAddChild = async () => {
-      if (!childId.trim()) {
-        setError('子供のユーザーIDを入力してください');
-        return;
-      }
+const handleAddChild = async () => {
+  if (!childId.trim()) {
+    setError('子供のIDを入力してください');
+    return;
+  }
 
-      setLoading(true);
-      setError('');
-      setSuccess('');
+  setLoading(true);
+  setError('');
+  setSuccess('');
 
-      const trimmedId = childId.trim();
-      
-      const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
-      if (!uuidRegex.test(trimmedId)) {
-        setError(`無効なID形式\n\n入力: ${trimmedId}\n文字数: ${trimmedId.length}/36`);
-        setLoading(false);
-        return;
-      }
+  const trimmedId = childId.trim();
 
-      try {
-        const { data: profile, error: profileError } = await supabase
-          .from('profiles')
-          .select('*')
-          .eq('id', trimmedId)
-          .maybeSingle();
+  // 6桁数字チェック
+  if (!/^\d{6}$/.test(trimmedId)) {
+    setError('6桁の数字を入力してください');
+    setLoading(false);
+    return;
+  }
 
-        if (profileError) {
-          setError(`データベースエラー\n\nコード: ${profileError.code}\nメッセージ: ${profileError.message}`);
-          setLoading(false);
-          return;
-        }
+  try {
+    const { data: profile, error: profileError } = await supabase
+      .from('profiles')
+      .select('*')
+      .eq('short_id', trimmedId)
+      .maybeSingle();
 
-        if (!profile) {
-          setError(`プロファイル未登録\n\n子供アカウントで以下を実行:\n1. ログアウト\n2. 再ログイン\n3. 「子供」を選択\n4. 名前入力して完了\n\n入力ID:\n${trimmedId}`);
-          setLoading(false);
-          return;
-        }
+    if (profileError || !profile) {
+      setError('ユーザーが見つかりませんでした');
+      setLoading(false);
+      return;
+    }
 
-        if (profile.role !== 'child') {
-          setError(`ロール不一致\n\n名前: ${profile.name}\nロール: ${profile.role}\n必要: child`);
-          setLoading(false);
-          return;
-        }
+    if (profile.role !== 'child') {
+      setError('このIDは子供アカウントではありません');
+      setLoading(false);
+      return;
+    }
 
-        const { data: existing } = await supabase
-          .from('parent_children')
-          .select('*')
-          .eq('parent_id', currentUser.id)
-          .eq('child_id', trimmedId)
-          .maybeSingle();
+    const { data: existing } = await supabase
+      .from('parent_children')
+      .select('*')
+      .eq('parent_id', currentUser.id)
+      .eq('child_id', profile.id)
+      .maybeSingle();
 
-        if (existing) {
-          setError(`${profile.name} は既に登録済みです`);
-          setLoading(false);
-          return;
-        }
+    if (existing) {
+      setError(`${profile.name} は既に登録済みです`);
+      setLoading(false);
+      return;
+    }
 
-        const { error: insertError } = await supabase
-          .from('parent_children')
-          .insert([{
-            parent_id: currentUser.id,
-            child_id: trimmedId
-          }]);
+    const { error: insertError } = await supabase
+      .from('parent_children')
+      .insert([{
+        parent_id: currentUser.id,
+        child_id: profile.id
+      }]);
 
-        if (insertError) {
-          setError(`登録失敗: ${insertError.message}`);
-          setLoading(false);
-          return;
-        }
+    if (insertError) {
+      setError('登録に失敗しました: ' + insertError.message);
+      setLoading(false);
+      return;
+    }
 
-        setSuccess(`${profile.name} を登録しました！`);
-        setChildId('');
-        
-        await loadMembersData(currentUser);
-        
-        setTimeout(() => {
-          setCurrentView('parent-dashboard');
-        }, 1500);
-
-      } catch (error) {
-        setError(`予期しないエラー\n\n${error.message}`);
-      } finally {
-        setLoading(false);
-      }
-    };
+    setSuccess(`${profile.name} を登録しました！`);
+    setChildId('');
+    await loadMembersData(currentUser);
+    setTimeout(() => setCurrentView('parent-dashboard'), 1500);
+  } catch (e) {
+    setError('エラーが発生しました: ' + e.message);
+  } finally {
+    setLoading(false);
+  }
+};
 
     return (
       <div className="register-screen">
@@ -7493,7 +7615,7 @@ const saveEdit = async () => {
       </div>
     </div>
   );
-};
+  };
 
   // ===== 保護者選択画面（複数保護者の場合の独立ビュー） =====
   const ParentListScreen = () => {
@@ -7868,54 +7990,67 @@ const saveEdit = async () => {
         )}
 
         {/* ID確認（共有機能付き） */}
-        {showIDModal && (
-          <div className="emergency-modal">
-            <div className="emergency-dialog">
-              <User size={72} style={{color:'#667eea',marginBottom:'1rem'}} />
-              <h2>あなたのユーザーID</h2>
-              <p style={{fontSize:'0.9rem',color:'#666',marginBottom:'1rem'}}>
-                保護者にこのIDを伝えて、家族に追加してもらいましょう
-              </p>
-              <div style={{
-                background:'#f8f9fa',padding:'1rem',borderRadius:'12px',
-                border:'2px solid #e9ecef',marginBottom:'1.25rem',
-                wordBreak:'break-all',fontFamily:'monospace',fontSize:'0.85rem',color:'#333'
-              }}>
-                {currentUser?.id}
-              </div>
+{showIDModal && (
+  <div className="emergency-modal">
+    <div className="emergency-dialog">
+      <User size={48} style={{color:'#667eea', marginBottom:'0.5rem'}} />
+      <h2>あなたのID</h2>
+      <p style={{fontSize:'0.9rem', color:'#666', marginBottom:'1rem'}}>
+        保護者にQRコードを読み取ってもらうか、6桁のIDを伝えてください
+      </p>
 
-              {/* 共有ボタン（メイン） */}
-              <button onClick={handleShareID}
-                style={{
-                  width:'100%',padding:'0.875rem',marginBottom:'0.75rem',
-                  background:'linear-gradient(135deg,#667eea,#764ba2)',
-                  color:'white',border:'none',borderRadius:'12px',
-                  fontSize:'1rem',fontWeight:'700',cursor:'pointer',
-                  display:'flex',alignItems:'center',justifyContent:'center',gap:'0.5rem'
-                }}>
-                <span style={{fontSize:'1.1rem'}}></span>
-                IDを共有する（LINE・メール等）
-              </button>
+      {/* 6桁ID */}
+      <div style={{
+        fontSize: '2.5rem', fontWeight: '800', letterSpacing: '0.3em',
+        color: '#667eea', background: '#f0f4ff', borderRadius: '16px',
+        padding: '1rem 1.5rem', marginBottom: '1.25rem'
+      }}>
+        {currentUser?.short_id || '------'}
+      </div>
 
-              {/* コピーボタン */}
-              <button onClick={copyID}
-                style={{
-                  width:'100%',padding:'0.875rem',marginBottom:'0.75rem',
-                  background:'white',color:'#667eea',
-                  border:'2px solid #667eea',borderRadius:'12px',
-                  fontSize:'1rem',fontWeight:'600',cursor:'pointer',
-                  display:'flex',alignItems:'center',justifyContent:'center',gap:'0.5rem'
-                }}>
-                <span style={{fontSize:'1.1rem'}}></span>
-                IDをコピー
-              </button>
+      {/* QRコード */}
+      {currentUser?.short_id && (
+        <div style={{marginBottom: '1.25rem'}}>
+          <QRCodeCanvas
+            value={`${window.location.origin}/#add-${currentUser.short_id}`}
+            size={200}
+            bgColor="#ffffff"
+            fgColor="#667eea"
+            level="M"
+            includeMargin={true}
+          />
+          <p style={{fontSize:'0.8rem', color:'#999', marginTop:'0.5rem'}}>
+            保護者がカメラで読み取ると自動追加されます
+          </p>
+        </div>
+      )}
 
-              <button className="cancel-sos" onClick={() => setShowIDModal(false)} style={{width:'100%'}}>
-                閉じる
-              </button>
-            </div>
-          </div>
-        )}
+      {/* 共有ボタン */}
+      <button onClick={handleShareID} style={{
+        width:'100%', padding:'0.875rem', marginBottom:'0.75rem',
+        background:'linear-gradient(135deg,#667eea,#764ba2)',
+        color:'white', border:'none', borderRadius:'12px',
+        fontSize:'1rem', fontWeight:'700', cursor:'pointer',
+        display:'flex', alignItems:'center', justifyContent:'center', gap:'0.5rem'
+      }}>
+        IDを共有する（LINE・メール等）
+      </button>
+
+      <button onClick={copyID} style={{
+        width:'100%', padding:'0.875rem', marginBottom:'0.75rem',
+        background:'white', color:'#667eea',
+        border:'2px solid #667eea', borderRadius:'12px',
+        fontSize:'1rem', fontWeight:'600', cursor:'pointer'
+      }}>
+        IDをコピー
+      </button>
+
+      <button className="cancel-sos" onClick={() => setShowIDModal(false)} style={{width:'100%'}}>
+        閉じる
+      </button>
+    </div>
+  </div>
+)}
       </div>
     );
   };
@@ -7947,4 +8082,3 @@ const saveEdit = async () => {
 };
 
 export default App
-
