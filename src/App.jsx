@@ -7372,13 +7372,32 @@ useEffect(() => {
                             <Clock size={16} />
                             更新
                           </button>
-                          <button 
-                            className={`gps-btn ${displayMember.gpsActive ? 'active' : ''}`}
-                            onClick={() => displayMember.gpsActive ? stopGPSTracking(displayMember.id) : startGPSTracking(displayMember.id)}
-                          >
-                            <Navigation size={16} />
-                            {displayMember.gpsActive ? 'GPS停止' : 'GPS開始'}
-                          </button>
+<button className="gps-btn refresh" onClick={() => updateLocationOnce(displayMember.id)}>
+  <Clock size={16} />
+  更新
+</button>
+
+<button 
+  className={`gps-btn ${displayMember.gpsActive ? 'active' : ''}`}
+  onClick={() => {
+    const hasActiveAlert = alerts.some(a => 
+      !a.read && 
+      a.memberId === displayMember.id && 
+      (a.type === 'sos' || a.type === 'lost')
+    );
+    if (displayMember.gpsActive && hasActiveAlert) return;
+    displayMember.gpsActive ? stopGPSTracking(displayMember.id) : startGPSTracking(displayMember.id);
+  }}
+  disabled={alerts.some(a => !a.read && a.memberId === displayMember.id && (a.type === 'sos' || a.type === 'lost')) && displayMember.gpsActive}
+  style={{
+    opacity: alerts.some(a => !a.read && a.memberId === displayMember.id && (a.type === 'sos' || a.type === 'lost')) && displayMember.gpsActive ? 0.5 : 1,
+    cursor: alerts.some(a => !a.read && a.memberId === displayMember.id && (a.type === 'sos' || a.type === 'lost')) && displayMember.gpsActive ? 'not-allowed' : 'pointer'
+  }}
+  title={alerts.some(a => !a.read && a.memberId === displayMember.id && (a.type === 'sos' || a.type === 'lost')) && displayMember.gpsActive ? '安全が確認できたらGPS停止ができます' : ''}
+>
+  <Navigation size={16} />
+  {displayMember.gpsActive ? 'GPS停止' : 'GPS開始'}
+</button>
                         </div>
                       </div>
 
@@ -7506,7 +7525,6 @@ useEffect(() => {
                                       }
                                       
                                       await loadSchedules(displayMember.id);
-                                      alert('スケジュールを削除しました');
                                     } catch (error) {
                                       alert('削除に失敗しました');
                                     }
@@ -7806,7 +7824,6 @@ useEffect(() => {
                             return;
                           }
 
-                          alert('スケジュールを更新しました！');
                         } else {
                           // 新規追加
                           const { error } = await supabase
@@ -7826,7 +7843,6 @@ useEffect(() => {
                             return;
                           }
 
-                          alert('スケジュールを追加しました！');
                         }
 
                         await loadSchedules(displayMemberCurrent.id);
@@ -7868,9 +7884,29 @@ useEffect(() => {
                  selectedAlert.type === 'battery' ? 'バッテリーの問題は解決しましたか？' :
                  'このアラートを解決済みにしますか？'}
               </h2>
-              {(selectedAlert.type === 'sos' || selectedAlert.type === 'lost') && (
-                <p>状態を「安全」に戻します。</p>
-              )}
+{(selectedAlert.type === 'sos' || selectedAlert.type === 'lost') && (
+  <p>状態を「安全」に戻します。</p>
+)}
+
+{(selectedAlert.type === 'sos' || selectedAlert.type === 'lost') && (
+  <div style={{
+    background: '#fef3c7',
+    border: '1px solid #f59e0b',
+    borderRadius: '12px',
+    padding: '0.875rem',
+    marginTop: '0.75rem',
+    display: 'flex',
+    alignItems: 'center',
+    gap: '0.5rem',
+    fontSize: '0.9rem',
+    color: '#92400e',
+    fontWeight: '600'
+  }}>
+    <Navigation size={16} />
+    安全が確認できたらGPS停止ができます
+  </div>
+)}
+              
               <p className="emergency-subtext">
                 {selectedAlert.type === 'sos' ? 'メンバーが安全な状態になったことを確認してください。' :
                  selectedAlert.type === 'lost' ? 'メンバーが無事に到着したことを確認してください。' :
