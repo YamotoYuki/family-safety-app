@@ -3063,7 +3063,11 @@ const handleAddChild = async () => {
     }
 
 setSuccess(`${profile.name} を登録しました！`);
-    setChildId('');
+setChildId('');
+setTimeout(async () => {
+  await loadMembersData(currentUser);
+  setCurrentView('parent-dashboard');
+}, 500);
 
     const { data: memberData } = await supabase
       .from('members')
