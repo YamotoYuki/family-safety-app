@@ -424,8 +424,8 @@ const handleAddParentByShortId = async (user, shortId) => {
   };
 
   // メンバーデータ読み込み
-  const loadMembersData = async (user) => {
-    if (!user || dataLoading) return;
+const loadMembersData = async (user, force = false) => {
+  if (!user || (dataLoading && !force)) return;
     
     setDataLoading(true);
     
@@ -3065,7 +3065,7 @@ const handleAddChild = async () => {
 setSuccess(`${profile.name} を登録しました！`);
 setChildId('');
 setTimeout(async () => {
-  await loadMembersData(currentUser);
+  await loadMembersData(currentUser, true);
   setCurrentView('parent-dashboard');
 }, 500);
 
