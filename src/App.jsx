@@ -628,24 +628,27 @@ const loadMembersData = async (user, force = false) => {
   };
 
   // スケジュール読み込み
-  const loadSchedules = async (memberId) => {
-    try {
-      const { data } = await supabase
-        .from('schedules')
-        .select('*')
-        .eq('member_id', memberId)
-        .eq('date', new Date().toISOString().split('T')[0])
-        .order('time', { ascending: true });
-      
-      if (data) {
-        setMembers(prev => prev.map(m => 
+const loadSchedules = async (memberId) => {
+  try {
+    const { data } = await supabase
+      .from('schedules')
+      .select('*')
+      .eq('member_id', memberId)
+      .eq('date', new Date().toISOString().split('T')[0])
+      .order('time', { ascending: true });
+    
+    if (data) {
+      setMembers(prev => {
+        const updated = prev.map(m => 
           m.id === memberId ? { ...m, schedule: data } : m
-        ));
-      }
-    } catch (error) {
-      console.error('Load schedules error:', error);
+        );
+        return updated;
+      });
     }
-  };
+  } catch (error) {
+    console.error('Load schedules error:', error);
+  }
+};
 
   // 目的地読み込み
   const loadDestination = async (memberId) => {
@@ -7341,22 +7344,18 @@ useEffect(() => {
                               className="gps-btn"
                               onClick={async () => {
                                 if (!confirm(`${displayMember.name}の状態を「安全」に戻しますか？`)) return;
-                                
                                 try {
                                   const { error } = await supabase
                                     .from('members')
                                     .update({ status: 'safe' })
                                     .eq('id', displayMember.id);
-                                  
                                   if (error) {
                                     alert('状態の更新に失敗しました');
                                     return;
                                   }
-                                  
                                   setMembers(prev => prev.map(m => 
                                     m.id === displayMember.id ? { ...m, status: 'safe' } : m
                                   ));
-                                  
                                   alert('状態を「安全」に戻しました');
                                 } catch (error) {
                                   alert('状態の更新に失敗しました');
@@ -7368,36 +7367,58 @@ useEffect(() => {
                               安全に戻す
                             </button>
                           )}
-                          <button className="gps-btn refresh" onClick={() => updateLocationOnce(displayMember.id)}>
+                          <button
+                            className="gps-btn refresh"
+                            onClick={() => updateLocationOnce(displayMember.id)}
+                          >
                             <Clock size={16} />
                             更新
                           </button>
-<button className="gps-btn refresh" onClick={() => updateLocationOnce(displayMember.id)}>
-  <Clock size={16} />
-  更新
-</button>
-
-<button 
-  className={`gps-btn ${displayMember.gpsActive ? 'active' : ''}`}
-  onClick={() => {
-    const hasActiveAlert = alerts.some(a => 
-      !a.read && 
-      a.memberId === displayMember.id && 
-      (a.type === 'sos' || a.type === 'lost')
-    );
-    if (displayMember.gpsActive && hasActiveAlert) return;
-    displayMember.gpsActive ? stopGPSTracking(displayMember.id) : startGPSTracking(displayMember.id);
-  }}
-  disabled={alerts.some(a => !a.read && a.memberId === displayMember.id && (a.type === 'sos' || a.type === 'lost')) && displayMember.gpsActive}
-  style={{
-    opacity: alerts.some(a => !a.read && a.memberId === displayMember.id && (a.type === 'sos' || a.type === 'lost')) && displayMember.gpsActive ? 0.5 : 1,
-    cursor: alerts.some(a => !a.read && a.memberId === displayMember.id && (a.type === 'sos' || a.type === 'lost')) && displayMember.gpsActive ? 'not-allowed' : 'pointer'
-  }}
-  title={alerts.some(a => !a.read && a.memberId === displayMember.id && (a.type === 'sos' || a.type === 'lost')) && displayMember.gpsActive ? '安全が確認できたらGPS停止ができます' : ''}
->
-  <Navigation size={16} />
-  {displayMember.gpsActive ? 'GPS停止' : 'GPS開始'}
-</button>
+                          <button 
+                            className={`gps-btn ${displayMember.gpsActive ? 'active' : ''}`}
+                            onClick={() => {
+                              const hasActiveAlert = alerts.some(a => 
+                                !a.read && 
+                                a.memberId === displayMember.id && 
+                                (a.type === 'sos' || a.type === 'lost')
+                              );
+                              if (displayMember.gpsActive && hasActiveAlert) return;
+                              displayMember.gpsActive 
+                                ? stopGPSTracking(displayMember.id) 
+                                : startGPSTracking(displayMember.id);
+                            }}
+                            disabled={
+                              alerts.some(a => 
+                                !a.read && 
+                                a.memberId === displayMember.id && 
+                                (a.type === 'sos' || a.type === 'lost')
+                              ) && displayMember.gpsActive
+                            }
+                            style={{
+                              opacity: alerts.some(a => 
+                                !a.read && 
+                                a.memberId === displayMember.id && 
+                                (a.type === 'sos' || a.type === 'lost')
+                              ) && displayMember.gpsActive ? 0.5 : 1,
+                              cursor: alerts.some(a => 
+                                !a.read && 
+                                a.memberId === displayMember.id && 
+                                (a.type === 'sos' || a.type === 'lost')
+                              ) && displayMember.gpsActive ? 'not-allowed' : 'pointer'
+                            }}
+                            title={
+                              alerts.some(a => 
+                                !a.read && 
+                                a.memberId === displayMember.id && 
+                                (a.type === 'sos' || a.type === 'lost')
+                              ) && displayMember.gpsActive 
+                                ? '安全が確認できたらGPS停止ができます' 
+                                : ''
+                            }
+                          >
+                            <Navigation size={16} />
+                            {displayMember.gpsActive ? 'GPS停止' : 'GPS開始'}
+                          </button>
                         </div>
                       </div>
 
