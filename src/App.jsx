@@ -628,27 +628,24 @@ const loadMembersData = async (user, force = false) => {
   };
 
   // スケジュール読み込み
-const loadSchedules = async (memberId) => {
-  try {
-    const { data } = await supabase
-      .from('schedules')
-      .select('*')
-      .eq('member_id', memberId)
-      .eq('date', new Date().toISOString().split('T')[0])
-      .order('time', { ascending: true });
-    
-    if (data) {
-      setMembers(prev => {
-        const updated = prev.map(m => 
+  const loadSchedules = async (memberId) => {
+    try {
+      const { data } = await supabase
+        .from('schedules')
+        .select('*')
+        .eq('member_id', memberId)
+        .eq('date', new Date().toISOString().split('T')[0])
+        .order('time', { ascending: true });
+      
+      if (data) {
+        setMembers(prev => prev.map(m => 
           m.id === memberId ? { ...m, schedule: data } : m
-        );
-        return updated;
-      });
+        ));
+      }
+    } catch (error) {
+      console.error('Load schedules error:', error);
     }
-  } catch (error) {
-    console.error('Load schedules error:', error);
-  }
-};
+  };
 
   // 目的地読み込み
   const loadDestination = async (memberId) => {
@@ -6988,12 +6985,9 @@ useEffect(() => {
     const unreadMessages = useMemo(() => {
       return messages.filter(m => m.to === currentUser?.id && !m.read).length;
     }, [messages, currentUser?.id]);
-    const displayMember = useMemo(() => {
-      if (selectedMemberId) {
-        return members.find(m => m.id === selectedMemberId) || null;
-      }
-      return members[0] || null;
-    }, [selectedMemberId, members]);
+    const displayMember = selectedMemberId 
+      ? members.find(m => m.id === selectedMemberId) || null
+      : members[0] || null;
 
     // Leaflet Map useEffect
 useEffect(() => {
@@ -7482,9 +7476,11 @@ useEffect(() => {
                         </button>
                       </div>
 
-                      <div className="schedule-list">
-                        {displayMember.schedule && displayMember.schedule.length > 0 ? (
-                          displayMember.schedule.map(item => (
+                        <div className="schedule-list">
+                        {(() => {
+                          const currentSchedule = members.find(m => m.id === (selectedMemberId || members[0]?.id))?.schedule || [];
+                          return currentSchedule.length > 0 ? (
+                            currentSchedule.map(item => (
                             <div key={item.id} className="schedule-item">
                               <div className="schedule-time-badge">
                                 {item.time.substring(0, 5)}
@@ -7544,8 +7540,11 @@ useEffect(() => {
                                         alert('削除に失敗しました');
                                         return;
                                       }
-                                      
-                                      await loadSchedules(displayMember.id);
+                                      setMembers(prev => prev.map(m => 
+                                       m.id === (selectedMemberId || members[0]?.id)
+                                       ? { ...m, schedule: (m.schedule || []).filter(s => s.id !== item.id) }
+                                       : m
+                                      ));
                                     } catch (error) {
                                       alert('削除に失敗しました');
                                     }
@@ -7558,12 +7557,13 @@ useEffect(() => {
                               </div>
                             </div>
                           ))
-                        ) : (
-                          <div className="schedule-empty">
-                            <Calendar size={48} />
-                            <p>今日のスケジュールはありません</p>
-                          </div>
-                        )}
+                          ) : (
+                            <div className="schedule-empty">
+                              <Calendar size={48} />
+                              <p>今日のスケジュールはありません</p>
+                            </div>
+                          );
+                        })()}
                       </div>
                     </div>
                   )}
@@ -7828,7 +7828,7 @@ useEffect(() => {
                       }
 
                       try {
-                        if (scheduleForm.id) {
+                          if (scheduleForm.id) {
                           // 編集
                           const { error } = await supabase
                             .from('schedules')
@@ -7845,9 +7845,19 @@ useEffect(() => {
                             return;
                           }
 
+                          setMembers(prev => prev.map(m => 
+                            m.id === displayMemberCurrent.id 
+                              ? { ...m, schedule: (m.schedule || []).map(s => 
+                                  s.id === scheduleForm.id 
+                                    ? { ...s, title: scheduleForm.title, time: scheduleForm.time, type: scheduleForm.type, location: scheduleForm.location }
+                                    : s
+                                ).sort((a, b) => a.time.localeCompare(b.time)) }
+                              : m
+                          ));
+
                         } else {
                           // 新規追加
-                          const { error } = await supabase
+                          const { error, data: insertedData } = await supabase
                             .from('schedules')
                             .insert([{
                               member_id: displayMemberCurrent.id,
@@ -7857,16 +7867,26 @@ useEffect(() => {
                               location: scheduleForm.location,
                               date: new Date().toISOString().split('T')[0],
                               completed: false
-                            }]);
+                            }])
+                            .select();
 
                           if (error) {
                             alert('スケジュールの追加に失敗しました');
                             return;
                           }
 
+                          if (insertedData && insertedData[0]) {
+                            setMembers(prev => {
+                              const updated = prev.map(m => 
+                                m.id === displayMemberCurrent.id 
+                                  ? { ...m, schedule: [...(m.schedule || []), insertedData[0]].sort((a, b) => a.time.localeCompare(b.time)) }
+                                  : m
+                              );
+                              alert('schedule count: ' + (updated.find(m => m.id === displayMemberCurrent.id)?.schedule?.length));
+                              return updated;
+                            });
+                          }
                         }
-
-                        await loadSchedules(displayMemberCurrent.id);
                         
                         setScheduleForm({
                           title: '',
@@ -7905,28 +7925,28 @@ useEffect(() => {
                  selectedAlert.type === 'battery' ? 'バッテリーの問題は解決しましたか？' :
                  'このアラートを解決済みにしますか？'}
               </h2>
-{(selectedAlert.type === 'sos' || selectedAlert.type === 'lost') && (
-  <p>状態を「安全」に戻します。</p>
-)}
+             {(selectedAlert.type === 'sos' || selectedAlert.type === 'lost') && (
+               <p>状態を「安全」に戻します。</p>
+             )}
 
-{(selectedAlert.type === 'sos' || selectedAlert.type === 'lost') && (
-  <div style={{
-    background: '#fef3c7',
-    border: '1px solid #f59e0b',
-    borderRadius: '12px',
-    padding: '0.875rem',
-    marginTop: '0.75rem',
-    display: 'flex',
-    alignItems: 'center',
-    gap: '0.5rem',
-    fontSize: '0.9rem',
-    color: '#92400e',
-    fontWeight: '600'
-  }}>
-    <Navigation size={16} />
-    安全が確認できたらGPS停止ができます
-  </div>
-)}
+            {(selectedAlert.type === 'sos' || selectedAlert.type === 'lost') && (
+              <div style={{
+                background: '#fef3c7',
+                border: '1px solid #f59e0b',
+                borderRadius: '12px',
+                padding: '0.875rem',
+                marginTop: '0.75rem',
+                display: 'flex',
+                alignItems: 'center',
+                gap: '0.5rem',
+                fontSize: '0.9rem',
+                color: '#92400e',
+                fontWeight: '600'
+              }}>
+                <Navigation size={16} />
+                安全が確認できたらGPS停止ができます
+                </div>
+              )}
               
               <p className="emergency-subtext">
                 {selectedAlert.type === 'sos' ? 'メンバーが安全な状態になったことを確認してください。' :
@@ -8666,35 +8686,45 @@ const saveEdit = async () => {
       }
     };
 
-    const sendSOS = async () => {
-      if (!myProfile) return;
-      try {
-        await supabase.from('members').update({ status: 'danger' }).eq('id', myProfile.id);
-        await supabase.from('alerts').insert([{
-          member_id: myProfile.id, type: 'sos',
-          message: `${currentUser.name}からSOSアラートが送信されました！`, read: false
-        }]);
-        setMembers(prev => prev.map(m => m.id === myProfile.id ? { ...m, status: 'danger' } : m));
-        alert('SOSアラートを送信しました！保護者に通知されます。');
-        setShowSOSModal(false);
-      } catch (e) { alert('アラートの送信に失敗しました'); }
-    };
+const sendSOS = async () => {
+  if (!myProfile) return;
+  try {
+    await supabase.from('members').update({ 
+      status: 'danger',
+      gps_enabled: true
+    }).eq('id', myProfile.id);
+    
+    await supabase.from('alerts').insert([{
+      member_id: myProfile.id, type: 'sos',
+      message: `${currentUser.name}からSOSアラートが送信されました！`, read: false
+    }]);
+    
+    setMembers(prev => prev.map(m => 
+      m.id === myProfile.id ? { ...m, status: 'danger', gpsActive: true } : m
+    ));
+    setGpsEnabled(true);
+    startChildGPSTracking();
+    
+    alert('SOSアラートを送信しました！保護者に通知されます。');
+    setShowSOSModal(false);
+  } catch (e) { alert('アラートの送信に失敗しました'); }
+};
 
-    const sendLostAlert = async () => {
-      if (!myProfile) return;
-      try {
-        await supabase.from('members').update({ status: 'warning', gps_enabled: true }).eq('id', myProfile.id);
-        await supabase.from('alerts').insert([{
-          member_id: myProfile.id, type: 'lost',
-          message: `${currentUser.name}が道に迷っています`, read: false
-        }]);
-        setMembers(prev => prev.map(m => m.id === myProfile.id ? { ...m, status: 'warning', gpsActive: true } : m));
-        setGpsEnabled(true);
-        startChildGPSTracking();
-        alert('道に迷ったアラートを送信し、GPS追跡を開始しました');
-        setShowLostModal(false);
-      } catch (e) { alert('アラートの送信に失敗しました'); }
-    };
+const sendLostAlert = async () => {
+  if (!myProfile) return;
+  try {
+    await supabase.from('members').update({ status: 'warning', gps_enabled: true }).eq('id', myProfile.id);
+    await supabase.from('alerts').insert([{
+      member_id: myProfile.id, type: 'lost',
+      message: `${currentUser.name}が道に迷っています`, read: false
+    }]);
+    setMembers(prev => prev.map(m => m.id === myProfile.id ? { ...m, status: 'warning', gpsActive: true } : m));
+    setGpsEnabled(true);
+    startChildGPSTracking();
+    alert('道に迷ったアラートを送信し、GPS追跡を開始しました');
+    setShowLostModal(false);
+  } catch (e) { alert('アラートの送信に失敗しました'); }
+};
 
     // ID共有
     const handleShareID = async () => {
