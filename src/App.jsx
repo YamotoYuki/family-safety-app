@@ -4538,6 +4538,8 @@ const GroupChatScreen = () => {
   const groupImageInputRef = useRef(null);
   const isAdmin = groupInfo?.created_by === currentUser?.id;
   const [pendingImage, setPendingImage] = useState(null);
+  const [showProfileModal, setShowProfileModal] = useState(false);
+  const [profileTarget, setProfileTarget] = useState(null);
 
   const scrollToBottom = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -5062,6 +5064,39 @@ const path = `chat/${currentUser.id}/${Date.now()}.${ext}`;
   } catch (e) { alert('マイクへのアクセスが拒否されました'); }
 };
 
+const openProfileModal = async (userId, name, avatarUrl, role) => {
+  try {
+    const { data } = await supabase
+      .from('profiles')
+      .select('name, email, phone, role, avatar_url')
+      .eq('id', userId)
+      .single();
+
+    const { data: presence } = await supabase
+      .from('user_presence')
+      .select('status, last_seen')
+      .eq('user_id', userId)
+      .single();
+
+    const isOnline = presence
+      ? (new Date() - new Date(presence.last_seen)) / 1000 < 30
+      : false;
+
+    setProfileTarget({
+      name: data?.name || name,
+      avatarUrl: data?.avatar_url || avatarUrl,
+      role: data?.role || role,
+      email: data?.email || '',
+      phone: data?.phone || '',
+      isOnline
+    });
+    setShowProfileModal(true);
+  } catch (e) {
+    setProfileTarget({ name, avatarUrl, role, email: '', phone: '', isOnline: false });
+    setShowProfileModal(true);
+  }
+};
+
   const sendGroupMessage = async () => {
     if (!newMessage.trim() || !selectedGroupId) return;
     
@@ -5448,10 +5483,18 @@ const path = `chat/${currentUser.id}/${Date.now()}.${ext}`;
                     }}
                   >
                     {!isMine && (
-                      <div style={{
-                        width: '32px',
-                        height: '32px',
-                        borderRadius: '50%',
+  <div
+onClick={() => openProfileModal(
+  msg.userId,
+  msg.userName,
+  msg.avatarUrl,
+  memberProfiles[msg.userId]?.role
+)}
+  style={{
+    width: '32px',
+    height: '32px',
+    borderRadius: '50%',
+    cursor: 'pointer',
                         background: msg.avatarUrl ? 'white' : (profile?.role === 'parent' ? 'linear-gradient(135deg, #667eea 0%, #d97706 100%)' : 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)'),
                         display: 'flex',
                         alignItems: 'center',
@@ -6029,6 +6072,132 @@ const path = `chat/${currentUser.id}/${Date.now()}.${ext}`;
   }}
   style={{display: 'none'}}
 />
+
+{showProfileModal && profileTarget && (
+  <div
+    onClick={() => setShowProfileModal(false)}
+    style={{
+      position: 'fixed', top: 0, left: 0, right: 0, bottom: 0,
+      background: 'rgba(0,0,0,0.5)', display: 'flex',
+      alignItems: 'center', justifyContent: 'center',
+      zIndex: 10000, padding: '1rem'
+    }}
+  >
+    <div
+      onClick={e => e.stopPropagation()}
+      style={{
+        background: 'white', borderRadius: '20px',
+        maxWidth: '360px', width: '100%', overflow: 'hidden',
+        boxShadow: '0 10px 40px rgba(0,0,0,0.2)'
+      }}
+    >
+      {/* ヘッダー */}
+      <div style={{
+        background: 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)',
+        padding: '2rem 1.5rem', textAlign: 'center', position: 'relative'
+      }}>
+        <div style={{
+          width: 90, height: 90, borderRadius: '50%',
+          margin: '0 auto 1rem', position: 'relative',
+          background: profileTarget.avatarUrl ? 'white' : 'rgba(255,255,255,0.3)',
+          display: 'flex', alignItems: 'center', justifyContent: 'center',
+          overflow: 'hidden', border: '3px solid rgba(255,255,255,0.5)',
+          fontSize: '2rem', color: 'white', fontWeight: 700
+        }}>
+          {profileTarget.avatarUrl
+            ? <img src={profileTarget.avatarUrl} alt={profileTarget.name}
+                style={{width:'100%', height:'100%', objectFit:'cover'}} />
+            : profileTarget.name?.charAt(0)
+          }
+          {/* オンライン状態ドット */}
+          <div style={{
+            position: 'absolute', bottom: 4, right: 4,
+            width: 18, height: 18, borderRadius: '50%',
+            background: profileTarget.isOnline ? '#06d6a0' : '#8e9aaf',
+            border: '3px solid white'
+          }} />
+        </div>
+        <h2 style={{color: 'white', margin: '0 0 0.5rem', fontSize: '1.4rem'}}>
+          {profileTarget.name}
+        </h2>
+        <div style={{display: 'flex', justifyContent: 'center', gap: '0.5rem'}}>
+          <span style={{
+            background: 'rgba(255,255,255,0.3)', color: 'white',
+            padding: '0.25rem 0.75rem', borderRadius: '12px',
+            fontSize: '0.8rem', fontWeight: '600'
+          }}>
+            {profileTarget.role === 'parent' ? '保護者' : '子供'}
+          </span>
+          <span style={{
+            background: profileTarget.isOnline ? 'rgba(6,214,160,0.4)' : 'rgba(142,154,175,0.4)',
+            color: 'white', padding: '0.25rem 0.75rem', borderRadius: '12px',
+            fontSize: '0.8rem', fontWeight: '600'
+          }}>
+            {profileTarget.isOnline ? 'オンライン' : 'オフライン'}
+          </span>
+        </div>
+      </div>
+
+      {/* 詳細情報 */}
+      <div style={{padding: '1.25rem'}}>
+        {/* メール */}
+        <div style={{
+          display: 'flex', alignItems: 'center', gap: '0.75rem',
+          padding: '0.875rem', background: '#f8f9fa',
+          borderRadius: '12px', marginBottom: '0.75rem'
+        }}>
+          <div style={{
+            width: 36, height: 36, borderRadius: '50%',
+            background: 'linear-gradient(135deg, #667eea, #764ba2)',
+            display: 'flex', alignItems: 'center', justifyContent: 'center',
+            flexShrink: 0
+          }}>
+            <i className="fas fa-envelope" style={{color: 'white', fontSize: '0.85rem'}} />
+          </div>
+          <div>
+            <div style={{fontSize: '0.75rem', color: '#999', marginBottom: '0.1rem'}}>メールアドレス</div>
+            <div style={{fontSize: '0.95rem', color: '#333', fontWeight: '500'}}>
+              {profileTarget.email || '未登録'}
+            </div>
+          </div>
+        </div>
+
+        {/* 電話番号 */}
+        <div style={{
+          display: 'flex', alignItems: 'center', gap: '0.75rem',
+          padding: '0.875rem', background: '#f8f9fa',
+          borderRadius: '12px', marginBottom: '1rem'
+        }}>
+          <div style={{
+            width: 36, height: 36, borderRadius: '50%',
+            background: 'linear-gradient(135deg, #10b981, #059669)',
+            display: 'flex', alignItems: 'center', justifyContent: 'center',
+            flexShrink: 0
+          }}>
+            <i className="fas fa-phone" style={{color: 'white', fontSize: '0.85rem'}} />
+          </div>
+          <div>
+            <div style={{fontSize: '0.75rem', color: '#999', marginBottom: '0.1rem'}}>電話番号</div>
+            <div style={{fontSize: '0.95rem', color: '#333', fontWeight: '500'}}>
+              {profileTarget.phone || '未登録'}
+            </div>
+          </div>
+        </div>
+
+        {/* 閉じるボタン */}
+        <button
+          onClick={() => setShowProfileModal(false)}
+          style={{
+            width: '100%', padding: '0.875rem',
+            background: 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)',
+            color: 'white', border: 'none', borderRadius: '12px',
+            fontSize: '1rem', fontWeight: '600', cursor: 'pointer'
+          }}
+        >閉じる</button>
+      </div>
+    </div>
+  </div>
+)}
 
       {/* グループ画像編集モーダル */}
       {showGroupImageEdit && (
@@ -6696,7 +6865,9 @@ const ParentChatDirectScreen = () => {
   const cameraInputRef = useRef(null);
   const [pendingImage, setPendingImage] = useState(null);
   const [isRecording, setIsRecording] = useState(false);
-  const mediaRecorderRef = useRef(null); 
+  const mediaRecorderRef = useRef(null);
+  const [showProfileModal, setShowProfileModal] = useState(false);
+  const [profileTarget, setProfileTarget] = useState(null);
 
   const emojis = ['😀','😂','🥰','😍','🤔','😅','😊','👍','❤️','🎉',
                   '🔥','✨','💯','👏','🙏','😭','😱','🤗','😎','🥳'];
@@ -6807,6 +6978,39 @@ const loadHistory = async (targetUserId) => {
       .subscribe();
     return () => supabase.removeChannel(ch);
   };
+
+  const openProfileModal = async (userId, name, avatarUrl, role) => {
+  try {
+    const { data } = await supabase
+      .from('profiles')
+      .select('name, email, phone, role, avatar_url')
+      .eq('id', userId)
+      .single();
+
+    const { data: presence } = await supabase
+      .from('user_presence')
+      .select('status, last_seen')
+      .eq('user_id', userId)
+      .single();
+
+    const isOnline = presence
+      ? (new Date() - new Date(presence.last_seen)) / 1000 < 30
+      : false;
+
+    setProfileTarget({
+      name: data?.name || name,
+      avatarUrl: data?.avatar_url || avatarUrl,
+      role: data?.role || role,
+      email: data?.email || '',
+      phone: data?.phone || '',
+      isOnline
+    });
+    setShowProfileModal(true);
+  } catch (e) {
+    setProfileTarget({ name, avatarUrl, role, email: '', phone: '', isOnline: false });
+    setShowProfileModal(true);
+  }
+};
 
   const sendMsg = async () => {
     if (!newMessage.trim() || !chatTarget) return;
@@ -7004,13 +7208,21 @@ const saveEdit = async () => {
             cursor: 'pointer', color: 'white', flexShrink: 0, fontSize: '1.1rem',
           }}
         >←</button>
-        <div style={{
-          width: 44, height: 44, borderRadius: '50%', flexShrink: 0,
-          background: chatTarget.avatarUrl ? 'white' : 'rgba(255,255,255,0.25)',
-          display: 'flex', alignItems: 'center', justifyContent: 'center',
-          color: 'white', fontWeight: 700, fontSize: '1.2rem',
-          overflow: 'hidden', border: '2px solid rgba(255,255,255,0.5)',
-        }}>
+        <div
+          onClick={() => openProfileModal(
+            chatTarget.id,
+            chatTarget.name,
+            chatTarget.avatarUrl,
+            'child'
+          )}
+          style={{
+            width: 44, height: 44, borderRadius: '50%', flexShrink: 0,
+            background: chatTarget.avatarUrl ? 'white' : 'rgba(255,255,255,0.25)',
+            display: 'flex', alignItems: 'center', justifyContent: 'center',
+            color: 'white', fontWeight: 700, fontSize: '1.2rem',
+            overflow: 'hidden', border: '2px solid rgba(255,255,255,0.5)',
+            cursor: 'pointer',
+          }}>
           {chatTarget.avatarUrl
             ? <img src={chatTarget.avatarUrl} alt={chatTarget.name} style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
             : (chatTarget.name?.charAt(0) || 'C')}
@@ -7036,6 +7248,132 @@ const saveEdit = async () => {
           }}
         ><Video size={20} /></button>
       </div>
+
+{showProfileModal && profileTarget && (
+  <div
+    onClick={() => setShowProfileModal(false)}
+    style={{
+      position: 'fixed', top: 0, left: 0, right: 0, bottom: 0,
+      background: 'rgba(0,0,0,0.5)', display: 'flex',
+      alignItems: 'center', justifyContent: 'center',
+      zIndex: 10000, padding: '1rem'
+    }}
+  >
+    <div
+      onClick={e => e.stopPropagation()}
+      style={{
+        background: 'white', borderRadius: '20px',
+        maxWidth: '360px', width: '100%', overflow: 'hidden',
+        boxShadow: '0 10px 40px rgba(0,0,0,0.2)'
+      }}
+    >
+      {/* ヘッダー */}
+      <div style={{
+        background: 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)',
+        padding: '2rem 1.5rem', textAlign: 'center', position: 'relative'
+      }}>
+        <div style={{
+          width: 90, height: 90, borderRadius: '50%',
+          margin: '0 auto 1rem', position: 'relative',
+          background: profileTarget.avatarUrl ? 'white' : 'rgba(255,255,255,0.3)',
+          display: 'flex', alignItems: 'center', justifyContent: 'center',
+          overflow: 'hidden', border: '3px solid rgba(255,255,255,0.5)',
+          fontSize: '2rem', color: 'white', fontWeight: 700
+        }}>
+          {profileTarget.avatarUrl
+            ? <img src={profileTarget.avatarUrl} alt={profileTarget.name}
+                style={{width:'100%', height:'100%', objectFit:'cover'}} />
+            : profileTarget.name?.charAt(0)
+          }
+          {/* オンライン状態ドット */}
+          <div style={{
+            position: 'absolute', bottom: 4, right: 4,
+            width: 18, height: 18, borderRadius: '50%',
+            background: profileTarget.isOnline ? '#06d6a0' : '#8e9aaf',
+            border: '3px solid white'
+          }} />
+        </div>
+        <h2 style={{color: 'white', margin: '0 0 0.5rem', fontSize: '1.4rem'}}>
+          {profileTarget.name}
+        </h2>
+        <div style={{display: 'flex', justifyContent: 'center', gap: '0.5rem'}}>
+          <span style={{
+            background: 'rgba(255,255,255,0.3)', color: 'white',
+            padding: '0.25rem 0.75rem', borderRadius: '12px',
+            fontSize: '0.8rem', fontWeight: '600'
+          }}>
+            {profileTarget.role === 'parent' ? '保護者' : '子供'}
+          </span>
+          <span style={{
+            background: profileTarget.isOnline ? 'rgba(6,214,160,0.4)' : 'rgba(142,154,175,0.4)',
+            color: 'white', padding: '0.25rem 0.75rem', borderRadius: '12px',
+            fontSize: '0.8rem', fontWeight: '600'
+          }}>
+            {profileTarget.isOnline ? 'オンライン' : 'オフライン'}
+          </span>
+        </div>
+      </div>
+
+      {/* 詳細情報 */}
+      <div style={{padding: '1.25rem'}}>
+        {/* メール */}
+        <div style={{
+          display: 'flex', alignItems: 'center', gap: '0.75rem',
+          padding: '0.875rem', background: '#f8f9fa',
+          borderRadius: '12px', marginBottom: '0.75rem'
+        }}>
+          <div style={{
+            width: 36, height: 36, borderRadius: '50%',
+            background: 'linear-gradient(135deg, #667eea, #764ba2)',
+            display: 'flex', alignItems: 'center', justifyContent: 'center',
+            flexShrink: 0
+          }}>
+            <i className="fas fa-envelope" style={{color: 'white', fontSize: '0.85rem'}} />
+          </div>
+          <div>
+            <div style={{fontSize: '0.75rem', color: '#999', marginBottom: '0.1rem'}}>メールアドレス</div>
+            <div style={{fontSize: '0.95rem', color: '#333', fontWeight: '500'}}>
+              {profileTarget.email || '未登録'}
+            </div>
+          </div>
+        </div>
+
+        {/* 電話番号 */}
+        <div style={{
+          display: 'flex', alignItems: 'center', gap: '0.75rem',
+          padding: '0.875rem', background: '#f8f9fa',
+          borderRadius: '12px', marginBottom: '1rem'
+        }}>
+          <div style={{
+            width: 36, height: 36, borderRadius: '50%',
+            background: 'linear-gradient(135deg, #10b981, #059669)',
+            display: 'flex', alignItems: 'center', justifyContent: 'center',
+            flexShrink: 0
+          }}>
+            <i className="fas fa-phone" style={{color: 'white', fontSize: '0.85rem'}} />
+          </div>
+          <div>
+            <div style={{fontSize: '0.75rem', color: '#999', marginBottom: '0.1rem'}}>電話番号</div>
+            <div style={{fontSize: '0.95rem', color: '#333', fontWeight: '500'}}>
+              {profileTarget.phone || '未登録'}
+            </div>
+          </div>
+        </div>
+
+        {/* 閉じるボタン */}
+        <button
+          onClick={() => setShowProfileModal(false)}
+          style={{
+            width: '100%', padding: '0.875rem',
+            background: 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)',
+            color: 'white', border: 'none', borderRadius: '12px',
+            fontSize: '1rem', fontWeight: '600', cursor: 'pointer'
+          }}
+        >閉じる</button>
+      </div>
+    </div>
+  </div>
+)}
 
       {/* メッセージエリア */}
       <div style={{
@@ -7063,9 +7401,17 @@ const saveEdit = async () => {
               }}>
                 {/* 相手アバター */}
                 {!isMine && (
-                  <div style={{
-                    width: 30, height: 30, borderRadius: '50%', flexShrink: 0,
-                    background: chatTarget.avatarUrl ? 'white' : 'linear-gradient(135deg,#667eea,#764ba2)',
+<div
+onClick={() => openProfileModal(
+  chatTarget.id,
+  chatTarget.name,
+  chatTarget.avatarUrl,
+  'child'
+)}
+  style={{
+    width: 30, height: 30, borderRadius: '50%', flexShrink: 0,
+    cursor: 'pointer',
+    background: chatTarget.avatarUrl ? 'white' : 'linear-gradient(135deg,#667eea,#764ba2)',
                     display: 'flex', alignItems: 'center', justifyContent: 'center',
                     color: 'white', fontWeight: 700, fontSize: '0.8rem', overflow: 'hidden',
                     border: chatTarget.avatarUrl ? '2px solid #ddd' : 'none',
@@ -8584,9 +8930,11 @@ const ParentChatScreen = () => {
   const chatBottomRef = useRef(null);
   const fileInputRef = useRef(null);
   const cameraInputRef = useRef(null);
-  const mediaRecorderRef = useRef(null);      // ← 追加
+  const mediaRecorderRef = useRef(null);
   const [pendingImage, setPendingImage] = useState(null);
-  const [isRecording, setIsRecording] = useState(false); 
+  const [isRecording, setIsRecording] = useState(false);
+  const [showProfileModal, setShowProfileModal] = useState(false);
+  const [profileTarget, setProfileTarget] = useState(null);
   const emojis = ['😀','😂','🥰','😍','🤔','😅','😊','👍','❤️','🎉','🔥','✨','💯','👏','🙏','😭','😱','🤗','😎','🥳'];
 
   useEffect(() => {
@@ -8688,6 +9036,39 @@ const loadHistory = async (parentId) => {
       .subscribe();
     return () => supabase.removeChannel(ch);
   };
+
+  const openProfileModal = async (userId, name, avatarUrl, role) => {
+  try {
+    const { data } = await supabase
+      .from('profiles')
+      .select('name, email, phone, role, avatar_url')
+      .eq('id', userId)
+      .single();
+
+    const { data: presence } = await supabase
+      .from('user_presence')
+      .select('status, last_seen')
+      .eq('user_id', userId)
+      .single();
+
+    const isOnline = presence
+      ? (new Date() - new Date(presence.last_seen)) / 1000 < 30
+      : false;
+
+    setProfileTarget({
+      name: data?.name || name,
+      avatarUrl: data?.avatar_url || avatarUrl,
+      role: data?.role || role,
+      email: data?.email || '',
+      phone: data?.phone || '',
+      isOnline
+    });
+    setShowProfileModal(true);
+  } catch (e) {
+    setProfileTarget({ name, avatarUrl, role, email: '', phone: '', isOnline: false });
+    setShowProfileModal(true);
+  }
+};
 
   const sendMsg = async () => {
     if (!newMessage.trim() || !chatParent) return;
@@ -8870,13 +9251,22 @@ const saveEdit = async () => {
           width: 40, height: 40, display: 'flex', alignItems: 'center',
           justifyContent: 'center', cursor: 'pointer', color: 'white', flexShrink: 0, fontSize: '1.1rem'
         }}>←</button>
-        <div style={{
-          width: 42, height: 42, borderRadius: '50%', flexShrink: 0,
-          background: chatParent.avatar_url ? 'white' : 'rgba(255,255,255,0.25)',
-          display: 'flex', alignItems: 'center', justifyContent: 'center',
-          color: 'white', fontWeight: 700, fontSize: '1.2rem',
-          overflow: 'hidden', border: '2px solid rgba(255,255,255,0.5)'
-        }}>
+        <div
+          onClick={() => openProfileModal(
+            chatParent.id,
+            chatParent.name,
+            chatParent.avatar_url,
+            'parent'
+          )}
+          style={{
+            width: 42, height: 42, borderRadius: '50%', flexShrink: 0,
+            background: chatParent.avatar_url ? 'white' : 'rgba(255,255,255,0.25)',
+            display: 'flex', alignItems: 'center', justifyContent: 'center',
+            color: 'white', fontWeight: 700, fontSize: '1.2rem',
+            overflow: 'hidden', border: '2px solid rgba(255,255,255,0.5)',
+            cursor: 'pointer',
+          }}
+        >
           {chatParent.avatar_url
             ? <img src={chatParent.avatar_url} alt={chatParent.name} style={{width:'100%',height:'100%',objectFit:'cover'}} />
             : 'P'}
@@ -8903,6 +9293,132 @@ const saveEdit = async () => {
         ><Video size={20} /></button>
       </div>
 
+{showProfileModal && profileTarget && (
+  <div
+    onClick={() => setShowProfileModal(false)}
+    style={{
+      position: 'fixed', top: 0, left: 0, right: 0, bottom: 0,
+      background: 'rgba(0,0,0,0.5)', display: 'flex',
+      alignItems: 'center', justifyContent: 'center',
+      zIndex: 10000, padding: '1rem'
+    }}
+  >
+    <div
+      onClick={e => e.stopPropagation()}
+      style={{
+        background: 'white', borderRadius: '20px',
+        maxWidth: '360px', width: '100%', overflow: 'hidden',
+        boxShadow: '0 10px 40px rgba(0,0,0,0.2)'
+      }}
+    >
+      {/* ヘッダー */}
+      <div style={{
+        background: 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)',
+        padding: '2rem 1.5rem', textAlign: 'center', position: 'relative'
+      }}>
+        <div style={{
+          width: 90, height: 90, borderRadius: '50%',
+          margin: '0 auto 1rem', position: 'relative',
+          background: profileTarget.avatarUrl ? 'white' : 'rgba(255,255,255,0.3)',
+          display: 'flex', alignItems: 'center', justifyContent: 'center',
+          overflow: 'hidden', border: '3px solid rgba(255,255,255,0.5)',
+          fontSize: '2rem', color: 'white', fontWeight: 700
+        }}>
+          {profileTarget.avatarUrl
+            ? <img src={profileTarget.avatarUrl} alt={profileTarget.name}
+                style={{width:'100%', height:'100%', objectFit:'cover'}} />
+            : profileTarget.name?.charAt(0)
+          }
+          {/* オンライン状態ドット */}
+          <div style={{
+            position: 'absolute', bottom: 4, right: 4,
+            width: 18, height: 18, borderRadius: '50%',
+            background: profileTarget.isOnline ? '#06d6a0' : '#8e9aaf',
+            border: '3px solid white'
+          }} />
+        </div>
+        <h2 style={{color: 'white', margin: '0 0 0.5rem', fontSize: '1.4rem'}}>
+          {profileTarget.name}
+        </h2>
+        <div style={{display: 'flex', justifyContent: 'center', gap: '0.5rem'}}>
+          <span style={{
+            background: 'rgba(255,255,255,0.3)', color: 'white',
+            padding: '0.25rem 0.75rem', borderRadius: '12px',
+            fontSize: '0.8rem', fontWeight: '600'
+          }}>
+            {profileTarget.role === 'parent' ? '保護者' : '子供'}
+          </span>
+          <span style={{
+            background: profileTarget.isOnline ? 'rgba(6,214,160,0.4)' : 'rgba(142,154,175,0.4)',
+            color: 'white', padding: '0.25rem 0.75rem', borderRadius: '12px',
+            fontSize: '0.8rem', fontWeight: '600'
+          }}>
+            {profileTarget.isOnline ? 'オンライン' : 'オフライン'}
+          </span>
+        </div>
+      </div>
+
+      {/* 詳細情報 */}
+      <div style={{padding: '1.25rem'}}>
+        {/* メール */}
+        <div style={{
+          display: 'flex', alignItems: 'center', gap: '0.75rem',
+          padding: '0.875rem', background: '#f8f9fa',
+          borderRadius: '12px', marginBottom: '0.75rem'
+        }}>
+          <div style={{
+            width: 36, height: 36, borderRadius: '50%',
+            background: 'linear-gradient(135deg, #667eea, #764ba2)',
+            display: 'flex', alignItems: 'center', justifyContent: 'center',
+            flexShrink: 0
+          }}>
+            <i className="fas fa-envelope" style={{color: 'white', fontSize: '0.85rem'}} />
+          </div>
+          <div>
+            <div style={{fontSize: '0.75rem', color: '#999', marginBottom: '0.1rem'}}>メールアドレス</div>
+            <div style={{fontSize: '0.95rem', color: '#333', fontWeight: '500'}}>
+              {profileTarget.email || '未登録'}
+            </div>
+          </div>
+        </div>
+
+        {/* 電話番号 */}
+        <div style={{
+          display: 'flex', alignItems: 'center', gap: '0.75rem',
+          padding: '0.875rem', background: '#f8f9fa',
+          borderRadius: '12px', marginBottom: '1rem'
+        }}>
+          <div style={{
+            width: 36, height: 36, borderRadius: '50%',
+            background: 'linear-gradient(135deg, #10b981, #059669)',
+            display: 'flex', alignItems: 'center', justifyContent: 'center',
+            flexShrink: 0
+          }}>
+            <i className="fas fa-phone" style={{color: 'white', fontSize: '0.85rem'}} />
+          </div>
+          <div>
+            <div style={{fontSize: '0.75rem', color: '#999', marginBottom: '0.1rem'}}>電話番号</div>
+            <div style={{fontSize: '0.95rem', color: '#333', fontWeight: '500'}}>
+              {profileTarget.phone || '未登録'}
+            </div>
+          </div>
+        </div>
+
+        {/* 閉じるボタン */}
+        <button
+          onClick={() => setShowProfileModal(false)}
+          style={{
+            width: '100%', padding: '0.875rem',
+            background: 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)',
+            color: 'white', border: 'none', borderRadius: '12px',
+            fontSize: '1rem', fontWeight: '600', cursor: 'pointer'
+          }}
+        >閉じる</button>
+      </div>
+    </div>
+  </div>
+)}
+
       {/* メッセージ */}
       <div style={{ flex: 1, overflowY: 'auto', padding: '1rem', display: 'flex', flexDirection: 'column', gap: '0.625rem' }}>
         {chatMessages.length === 0 ? (
@@ -8919,9 +9435,17 @@ const saveEdit = async () => {
               alignItems: 'flex-end', gap: '0.5rem'
             }}>
               {!isMine && (
-                <div style={{
-                  width: 30, height: 30, borderRadius: '50%', flexShrink: 0,
-                  background: chatParent.avatar_url ? 'white' : 'linear-gradient(135deg,#667eea,#d97706)',
+<div
+onClick={() => openProfileModal(
+  chatParent.id,
+  chatParent.name,
+  chatParent.avatar_url,
+  'parent'
+)}
+  style={{
+    width: 30, height: 30, borderRadius: '50%', flexShrink: 0,
+    cursor: 'pointer',
+    background: chatParent.avatar_url ? 'white' : 'linear-gradient(135deg,#667eea,#d97706)',
                   display: 'flex', alignItems: 'center', justifyContent: 'center',
                   color: 'white', fontWeight: 700, fontSize: '0.8rem', overflow: 'hidden',
                   border: chatParent.avatar_url ? '2px solid #ddd' : 'none'
