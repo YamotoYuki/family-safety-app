@@ -5019,14 +5019,17 @@ const stopRecording = () => {
 const startRecording = async () => {
   try {
     const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-    const mediaRecorder = new MediaRecorder(stream);
+    // iOSはmp4、それ以外はwebm
+    const mimeType = MediaRecorder.isTypeSupported('audio/webm') ? 'audio/webm' : 'audio/mp4';
+    const mediaRecorder = new MediaRecorder(stream, { mimeType });
     mediaRecorderRef.current = mediaRecorder;
     const chunks = [];
     mediaRecorder.ondataavailable = e => chunks.push(e.data);
     mediaRecorder.onstop = async () => {
       stream.getTracks().forEach(t => t.stop());
-      const blob = new Blob(chunks, { type: 'audio/webm' });
-      const path = `chat/${currentUser.id}/${Date.now()}.webm`;
+const ext = mimeType === 'audio/webm' ? 'webm' : 'mp4';
+const blob = new Blob(chunks, { type: mimeType });
+const path = `chat/${currentUser.id}/${Date.now()}.${ext}`;
       const { error: uploadError } = await supabase.storage
         .from('chat-images')
         .upload(path, blob);
@@ -6882,14 +6885,17 @@ const stopRecording = () => {
 const startRecording = async () => {
   try {
     const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-    const mediaRecorder = new MediaRecorder(stream);
+    // iOSはmp4、それ以外はwebm
+    const mimeType = MediaRecorder.isTypeSupported('audio/webm') ? 'audio/webm' : 'audio/mp4';
+    const mediaRecorder = new MediaRecorder(stream, { mimeType });
     mediaRecorderRef.current = mediaRecorder;
     const chunks = [];
     mediaRecorder.ondataavailable = e => chunks.push(e.data);
     mediaRecorder.onstop = async () => {
       stream.getTracks().forEach(t => t.stop());
-      const blob = new Blob(chunks, { type: 'audio/webm' });
-      const path = `chat/${currentUser.id}/${Date.now()}.webm`;
+const ext = mimeType === 'audio/webm' ? 'webm' : 'mp4';
+const blob = new Blob(chunks, { type: mimeType });
+const path = `chat/${currentUser.id}/${Date.now()}.${ext}`;
       const { error: uploadError } = await supabase.storage
         .from('chat-images').upload(path, blob);
       if (uploadError) { alert('音声のアップロードに失敗しました'); return; }
@@ -8753,14 +8759,17 @@ const stopRecording = () => {
 const startRecording = async () => {
   try {
     const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-    const mediaRecorder = new MediaRecorder(stream);
+    // iOSはmp4、それ以外はwebm
+    const mimeType = MediaRecorder.isTypeSupported('audio/webm') ? 'audio/webm' : 'audio/mp4';
+    const mediaRecorder = new MediaRecorder(stream, { mimeType });
     mediaRecorderRef.current = mediaRecorder;
     const chunks = [];
     mediaRecorder.ondataavailable = e => chunks.push(e.data);
     mediaRecorder.onstop = async () => {
       stream.getTracks().forEach(t => t.stop());
-      const blob = new Blob(chunks, { type: 'audio/webm' });
-      const path = `chat/${currentUser.id}/${Date.now()}.webm`;
+const ext = mimeType === 'audio/webm' ? 'webm' : 'mp4';
+const blob = new Blob(chunks, { type: mimeType });
+const path = `chat/${currentUser.id}/${Date.now()}.${ext}`;
       const { error: uploadError } = await supabase.storage
         .from('chat-images').upload(path, blob);
       if (uploadError) { alert('音声のアップロードに失敗しました'); return; }
