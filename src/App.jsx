@@ -3,7 +3,8 @@ import { QRCodeCanvas } from 'qrcode.react';
 import { 
   MapPin, AlertTriangle, Activity, Battery, Clock, User, Mail, 
   Shield, Users, LogOut, Navigation, Phone, MessageCircle, Calendar, Bell, Check,
-  Send, X, Plus, Settings, ChevronRight, Edit, Trash2
+  Send, X, Plus, Settings, ChevronRight, Edit, Trash2, Video,
+  Image as ImageIcon, Camera, Mic
 } from 'lucide-react';
 import { createClient } from '@supabase/supabase-js';
 import './App.css';
@@ -4530,8 +4531,13 @@ const GroupChatScreen = () => {
   const [showMessageMenu, setShowMessageMenu] = useState(null);
   const messagesEndRef = useRef(null);
   const fileInputRef = useRef(null);
+  const cameraInputRef = useRef(null);
+  const mediaRecorderRef = useRef(null);
+  const [isRecording, setIsRecording] = useState(false);
   const selectedGroupId = sessionStorage.getItem('selectedGroupId');
+  const groupImageInputRef = useRef(null);
   const isAdmin = groupInfo?.created_by === currentUser?.id;
+  const [pendingImage, setPendingImage] = useState(null);
 
   const scrollToBottom = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -4963,6 +4969,96 @@ const loadGroupMessages = async () => {
     }
   };
 
+const sendImage = async (file) => {
+  try {
+    const ext = file.name.split('.').pop();
+    const path = `chat/${currentUser.id}/${Date.now()}.${ext}`;
+    const { error: uploadError } = await supabase.storage
+      .from('chat-images')
+      .upload(path, file);
+    if (uploadError) { alert('画像のアップロードに失敗しました'); return; }
+    const { data: urlData } = supabase.storage.from('chat-images').getPublicUrl(path);
+
+    // テキストありの場合は改行で区切る
+    const fullText = newMessage.trim()
+      ? `[画像] ${urlData.publicUrl}\n${newMessage.trim()}`
+      : `[画像] ${urlData.publicUrl}`;
+
+    const { data, error } = await supabase
+      .from('group_messages')
+      .insert([{
+        group_id: selectedGroupId,
+        from_user_id: currentUser.id,
+        text: fullText
+      }])
+      .select().single();
+    if (error) throw error;
+    if (data) {
+      setGroupMessages(prev => [...prev, {
+        id: data.id,
+        userId: data.from_user_id,
+        userName: currentUser.name,
+        avatarUrl: currentUser.avatar_url,
+        text: data.text,
+        timestamp: new Date(data.created_at),
+        edited: false,
+        readBy: []
+      }]);
+      setNewMessage('');
+    }
+  } catch (e) { alert('画像の送信に失敗しました'); }
+};
+
+const stopRecording = () => {
+  if (mediaRecorderRef.current && isRecording) {
+    mediaRecorderRef.current.stop();
+    setIsRecording(false);
+  }
+};
+
+const startRecording = async () => {
+  try {
+    const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    const mediaRecorder = new MediaRecorder(stream);
+    mediaRecorderRef.current = mediaRecorder;
+    const chunks = [];
+    mediaRecorder.ondataavailable = e => chunks.push(e.data);
+    mediaRecorder.onstop = async () => {
+      stream.getTracks().forEach(t => t.stop());
+      const blob = new Blob(chunks, { type: 'audio/webm' });
+      const path = `chat/${currentUser.id}/${Date.now()}.webm`;
+      const { error: uploadError } = await supabase.storage
+        .from('chat-images')
+        .upload(path, blob);
+      if (uploadError) { alert('音声のアップロードに失敗しました'); return; }
+      const { data: urlData } = supabase.storage.from('chat-images').getPublicUrl(path);
+      const { data, error } = await supabase
+        .from('group_messages')
+        .insert([{
+          group_id: selectedGroupId,
+          from_user_id: currentUser.id,
+          text: `[音声] ${urlData.publicUrl}`
+        }])
+        .select().single();
+      if (error) { alert('音声の送信に失敗しました'); return; }
+      if (data) {
+        setGroupMessages(prev => [...prev, {
+          id: data.id,
+          userId: data.from_user_id,
+          userName: currentUser.name,
+          avatarUrl: currentUser.avatar_url,
+          text: data.text,
+          timestamp: new Date(data.created_at),
+          edited: false,
+          readBy: []
+        }]);
+      }
+    };
+    mediaRecorder.start();
+    setIsRecording(true);
+  } catch (e) { alert('マイクへのアクセスが拒否されました'); }
+};
+
   const sendGroupMessage = async () => {
     if (!newMessage.trim() || !selectedGroupId) return;
     
@@ -5206,9 +5302,25 @@ const loadGroupMessages = async () => {
               </p>
             </div>
           </div>
-          <div style={{display: 'flex', gap: '0.5rem'}}>
-            <button 
-              className="group-settings-btn"
+<div style={{display: 'flex', gap: '0.5rem', alignItems: 'center'}}>
+  <button
+    onClick={() => alert('音声通話機能は準備中です')}
+    style={{
+      background: 'rgba(255,255,255,0.2)', border: 'none', borderRadius: '50%',
+      width: 40, height: 40, display: 'flex', alignItems: 'center',
+      justifyContent: 'center', cursor: 'pointer', color: 'white', flexShrink: 0,
+    }}
+  ><Phone size={20} /></button>
+  <button
+    onClick={() => alert('ビデオ通話機能は準備中です')}
+    style={{
+      background: 'rgba(255,255,255,0.2)', border: 'none', borderRadius: '50%',
+      width: 40, height: 40, display: 'flex', alignItems: 'center',
+      justifyContent: 'center', cursor: 'pointer', color: 'white', flexShrink: 0,
+    }}
+  ><Video size={20} /></button>
+  <button 
+    className="group-settings-btn"
               onClick={() => setShowMenu(!showMenu)}
               style={{background: 'rgba(255,255,255,0.2)', color: 'white', position: 'relative'}}
             >
@@ -5415,7 +5527,28 @@ const loadGroupMessages = async () => {
                           cursor: isMine ? 'pointer' : 'default'
                         }}
                       >
-                        <p style={{margin: 0, lineHeight: '1.4', fontSize: '0.95rem'}}>{msg.text}</p>
+{msg.text.startsWith('[画像] ') ? (
+  <div>
+    <img
+      src={msg.text.split('\n')[0].replace('[画像] ', '')}
+      alt="画像"
+      style={{ maxWidth: '100%', borderRadius: 12, display: 'block', maxHeight: 300 }}
+    />
+    {msg.text.split('\n')[1] && (
+      <p style={{ margin: '0.5rem 0 0 0', lineHeight: '1.4', fontSize: '0.95rem' }}>
+        {msg.text.split('\n')[1]}
+      </p>
+    )}
+  </div>
+) : msg.text.startsWith('[音声] ') ? (
+  <audio
+    controls
+    src={msg.text.replace('[音声] ', '')}
+    style={{ maxWidth: '100%' }}
+  />
+) : (
+  <p style={{ margin: 0, lineHeight: '1.4', fontSize: '0.95rem' }}>{msg.text}</p>
+)}
                         
                         <div style={{
                           display: 'flex',
@@ -5517,6 +5650,37 @@ const loadGroupMessages = async () => {
 
         {/* 入力エリア */}
         <div className="chat-input" style={{background: '#f0f0f0', padding: '0.75rem', display: 'flex', gap: '0.5rem', alignItems: 'flex-end', position: 'relative'}}>
+{pendingImage && (
+  <div style={{
+    position: 'absolute',
+    bottom: '70px',
+    left: '10px',
+    right: '10px',
+    background: 'white',
+    borderRadius: '12px',
+    padding: '0.75rem',
+    boxShadow: '0 4px 12px rgba(0,0,0,0.15)',
+    zIndex: 100
+  }}>
+    <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
+      <img
+        src={pendingImage.previewUrl}
+        style={{ width: 60, height: 60, objectFit: 'cover', borderRadius: 8 }}
+      />
+      <div style={{ flex: 1, fontSize: '0.85rem', color: '#666' }}>
+        画像が選択されました<br/>
+        <span style={{fontSize: '0.75rem', color: '#999'}}>テキストも入力できます</span>
+      </div>
+      <button
+        onClick={() => setPendingImage(null)}
+        style={{
+          background: 'none', color: '#999', border: 'none',
+          cursor: 'pointer', fontSize: '1.2rem'
+        }}
+      >✕</button>
+    </div>
+  </div>
+)}
           {editingMessageId ? (
             <div style={{
               flex: 1,
@@ -5762,37 +5926,106 @@ const loadGroupMessages = async () => {
                   outline: 'none'
                 }}
               />
-              <button 
-                onClick={(e) => {
-                  e.preventDefault();
-                  e.stopPropagation();
-                  sendGroupMessage();
-                }}
-                onMouseDown={(e) => {
-                  e.preventDefault();
-                }}
-                className="send-btn"
-                type="button"
-                style={{
-                  background: '#667eea',
-                  width: '44px',
-                  height: '44px',
-                  borderRadius: '50%',
-                  border: 'none',
-                  display: 'flex',
-                  alignItems: 'center',
-                  justifyContent: 'center',
-                  cursor: 'pointer',
-                  color: 'white',
-                  flexShrink: 0
-                }}
-              >
-                <Send size={20} />
-              </button>
+
+{/* 送信 or メディアボタン */}
+{newMessage.trim() || pendingImage ? (
+  <button
+    onClick={(e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      if (pendingImage) {
+        sendImage(pendingImage.file);
+        setPendingImage(null);
+      } else {
+        sendGroupMessage();
+      } 
+    }}
+                  onMouseDown={(e) => {
+                    e.preventDefault();
+                  }}
+                  className="send-btn"
+                  type="button"
+                  style={{
+                    background: '#667eea',
+                    width: '44px',
+                    height: '44px',
+                    borderRadius: '50%',
+                    border: 'none',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    cursor: 'pointer',
+                    color: 'white',
+                    flexShrink: 0
+                  }}
+                >
+                  <Send size={20} />
+                </button>
+              ) : (
+                <>
+                  <button type="button"
+                    onMouseDown={e => e.preventDefault()}
+                    onClick={() => fileInputRef.current?.click()}
+                    style={{
+                      background: 'none', border: 'none', width: 40, height: 40,
+                      display: 'flex', alignItems: 'center', justifyContent: 'center',
+                      cursor: 'pointer', color: '#667eea', flexShrink: 0,
+                    }}
+                  ><ImageIcon size={22} /></button>
+                  <button type="button"
+                    onMouseDown={e => e.preventDefault()}
+                    onClick={() => cameraInputRef.current?.click()}
+                    style={{
+                      background: 'none', border: 'none', width: 40, height: 40,
+                      display: 'flex', alignItems: 'center', justifyContent: 'center',
+                      cursor: 'pointer', color: '#667eea', flexShrink: 0,
+                    }}
+                  ><Camera size={22} /></button>
+                  <button type="button"
+                    onClick={isRecording ? stopRecording : startRecording}
+                    style={{
+                      background: isRecording ? '#ef4444' : 'none',
+                      border: 'none', width: 40, height: 40,
+                      borderRadius: isRecording ? '50%' : 0,
+                      display: 'flex', alignItems: 'center', justifyContent: 'center',
+                      cursor: 'pointer',
+                      color: isRecording ? 'white' : '#667eea',
+                      flexShrink: 0,
+                    }}
+                  ><Mic size={22} /></button>
+                </>
+              )}
             </>
           )}
         </div>
       </div>
+<input
+  ref={fileInputRef}
+  type="file"
+  accept="image/*"
+  onChange={e => {
+    const file = e.target.files?.[0];
+    if (file) {
+      setPendingImage({ file, previewUrl: URL.createObjectURL(file) });
+    }
+    e.target.value = '';
+  }}
+  style={{display: 'none'}}
+/>
+<input
+  ref={cameraInputRef}
+  type="file"
+  accept="image/*"
+  capture="environment"
+  onChange={e => {
+    const file = e.target.files?.[0];
+    if (file) {
+      setPendingImage({ file, previewUrl: URL.createObjectURL(file) });
+    }
+    e.target.value = '';
+  }}
+  style={{display: 'none'}}
+/>
 
       {/* グループ画像編集モーダル */}
       {showGroupImageEdit && (
@@ -5853,7 +6086,7 @@ const loadGroupMessages = async () => {
             </div>
 
             <input
-              ref={fileInputRef}
+              ref={groupImageInputRef}
               type="file"
               accept="image/*"
               onChange={handleGroupImageUpload}
@@ -5861,7 +6094,7 @@ const loadGroupMessages = async () => {
             />
 
             <button
-              onClick={() => fileInputRef.current?.click()}
+              onClick={() => groupImageInputRef.current?.click()}
               style={{
                 width: '100%',
                 padding: '0.875rem',
@@ -6456,6 +6689,11 @@ const ParentChatDirectScreen = () => {
   const [editingMessageId, setEditingMessageId] = useState(null);
   const [editingMessageText, setEditingMessageText] = useState('');
   const chatBottomRef = useRef(null);
+  const fileInputRef = useRef(null);
+  const cameraInputRef = useRef(null);
+  const [pendingImage, setPendingImage] = useState(null);
+  const [isRecording, setIsRecording] = useState(false);
+  const mediaRecorderRef = useRef(null); 
 
   const emojis = ['😀','😂','🥰','😍','🤔','😅','😊','👍','❤️','🎉',
                   '🔥','✨','💯','👏','🙏','😭','😱','🤗','😎','🥳'];
@@ -6606,6 +6844,75 @@ const loadHistory = async (targetUserId) => {
     }
   };
 
+  const sendImage = async (file) => {
+  try {
+    const ext = file.name.split('.').pop();
+    const path = `chat/${currentUser.id}/${Date.now()}.${ext}`;
+    const { error: uploadError } = await supabase.storage
+      .from('chat-images').upload(path, file);
+    if (uploadError) { alert('画像のアップロードに失敗しました'); return; }
+    const { data: urlData } = supabase.storage.from('chat-images').getPublicUrl(path);
+    const fullText = newMessage.trim()
+      ? `[画像] ${urlData.publicUrl}\n${newMessage.trim()}`
+      : `[画像] ${urlData.publicUrl}`;
+    const targetId = chatTarget?.id;
+    const { data, error } = await supabase
+      .from('messages')
+      .insert([{ from_user_id: currentUser.id, to_user_id: targetId, text: fullText, read: false }])
+      .select().single();
+    if (error) throw error;
+    if (data) {
+      setChatMessages(prev => [...prev, {
+        id: data.id, from: data.from_user_id, to: data.to_user_id,
+        text: data.text, timestamp: new Date(data.created_at),
+        read: false, edited: false, editedAt: null,
+      }]);
+      setNewMessage('');
+    }
+  } catch (e) { alert('画像の送信に失敗しました'); }
+};
+
+const stopRecording = () => {
+  if (mediaRecorderRef.current && isRecording) {
+    mediaRecorderRef.current.stop();
+    setIsRecording(false);
+  }
+};
+
+const startRecording = async () => {
+  try {
+    const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    const mediaRecorder = new MediaRecorder(stream);
+    mediaRecorderRef.current = mediaRecorder;
+    const chunks = [];
+    mediaRecorder.ondataavailable = e => chunks.push(e.data);
+    mediaRecorder.onstop = async () => {
+      stream.getTracks().forEach(t => t.stop());
+      const blob = new Blob(chunks, { type: 'audio/webm' });
+      const path = `chat/${currentUser.id}/${Date.now()}.webm`;
+      const { error: uploadError } = await supabase.storage
+        .from('chat-images').upload(path, blob);
+      if (uploadError) { alert('音声のアップロードに失敗しました'); return; }
+      const { data: urlData } = supabase.storage.from('chat-images').getPublicUrl(path);
+      const targetId = chatTarget?.id;
+      const { data, error } = await supabase
+        .from('messages')
+        .insert([{ from_user_id: currentUser.id, to_user_id: targetId, text: `[音声] ${urlData.publicUrl}`, read: false }])
+        .select().single();
+      if (error) { alert('音声の送信に失敗しました'); return; }
+      if (data) {
+        setChatMessages(prev => [...prev, {
+          id: data.id, from: data.from_user_id, to: data.to_user_id,
+          text: data.text, timestamp: new Date(data.created_at),
+          read: false, edited: false, editedAt: null,
+        }]);
+      }
+    };
+    mediaRecorder.start();
+    setIsRecording(true);
+  } catch (e) { alert('マイクへのアクセスが拒否されました'); }
+};
+
   const deleteMessage = async (messageId) => {
     setChatMessages(prev => prev.filter(m => m.id !== messageId));
     try {
@@ -6706,6 +7013,22 @@ const saveEdit = async () => {
           <h3 style={{ color: 'white', margin: 0, fontSize: '1rem', fontWeight: 700 }}>{chatTarget.name}</h3>
           <p style={{ color: statusColor, margin: 0, fontSize: '0.76rem', fontWeight: 600 }}>{statusLabel}</p>
         </div>
+        <button
+          onClick={() => alert('音声通話機能は準備中です')}
+          style={{
+            background: 'rgba(255,255,255,0.2)', border: 'none', borderRadius: '50%',
+            width: 40, height: 40, display: 'flex', alignItems: 'center',
+            justifyContent: 'center', cursor: 'pointer', color: 'white', flexShrink: 0,
+          }}
+        ><Phone size={20} /></button>
+        <button
+          onClick={() => alert('ビデオ通話機能は準備中です')}
+          style={{
+            background: 'rgba(255,255,255,0.2)', border: 'none', borderRadius: '50%',
+            width: 40, height: 40, display: 'flex', alignItems: 'center',
+            justifyContent: 'center', cursor: 'pointer', color: 'white', flexShrink: 0,
+          }}
+        ><Video size={20} /></button>
       </div>
 
       {/* メッセージエリア */}
@@ -6752,38 +7075,6 @@ const saveEdit = async () => {
                   alignItems: isMine ? 'flex-end' : 'flex-start',
                   maxWidth: '72%', position: 'relative',
                 }}>
-                  {/* 編集モード */}
-                  {isEditing ? (
-                    <div style={{ display: 'flex', flexDirection: 'column', gap: '0.4rem', width: '100%', minWidth: 200 }}>
-                      <input
-                        type="text"
-                        value={editingMessageText}
-                        onChange={e => setEditingMessageText(e.target.value)}
-                        onKeyDown={e => {
-                          if (e.key === 'Enter') { e.preventDefault(); saveEdit(); }
-                          if (e.key === 'Escape') cancelEdit();
-                        }}
-                        autoFocus
-                        style={{
-                          padding: '0.6rem 0.875rem', borderRadius: 18,
-                          border: '2px solid #667eea', fontSize: '0.95rem',
-                          outline: 'none', background: 'white',
-                        }}
-                      />
-                      <div style={{ display: 'flex', gap: '0.4rem', justifyContent: 'flex-end' }}>
-                        <button onClick={cancelEdit} style={{
-                          padding: '0.3rem 0.75rem', borderRadius: 12, border: 'none',
-                          background: '#e0e0e0', color: '#555', fontSize: '0.8rem',
-                          cursor: 'pointer', fontWeight: 600,
-                        }}>キャンセル</button>
-                        <button onClick={saveEdit} style={{
-                          padding: '0.3rem 0.75rem', borderRadius: 12, border: 'none',
-                          background: '#667eea', color: 'white', fontSize: '0.8rem',
-                          cursor: 'pointer', fontWeight: 600,
-                        }}>保存</button>
-                      </div>
-                    </div>
-                  ) : (
                     <>
                       {/* バブル */}
                       <div
@@ -6801,7 +7092,24 @@ const saveEdit = async () => {
                           cursor: isMine ? 'pointer' : 'default',
                         }}
                       >
-                        <p style={{ margin: 0, fontSize: '0.95rem', lineHeight: 1.4, color: '#111' }}>{msg.text}</p>
+{msg.text.startsWith('[画像] ') ? (
+  <div>
+    <img
+      src={msg.text.split('\n')[0].replace('[画像] ', '')}
+      alt="画像"
+      style={{ maxWidth: '100%', borderRadius: 12, display: 'block', maxHeight: 300 }}
+    />
+    {msg.text.split('\n')[1] && (
+      <p style={{ margin: '0.5rem 0 0 0', lineHeight: '1.4', fontSize: '0.95rem' }}>
+        {msg.text.split('\n')[1]}
+      </p>
+    )}
+  </div>
+) : msg.text.startsWith('[音声] ') ? (
+  <audio controls src={msg.text.replace('[音声] ', '')} style={{ maxWidth: '100%' }} />
+) : (
+  <p style={{ margin: 0, fontSize: '0.95rem', lineHeight: 1.4, color: '#111' }}>{msg.text}</p>
+)}
                       </div>
 
                       {/* 時刻・既読・編集済み */}
@@ -6826,8 +7134,8 @@ const saveEdit = async () => {
                           data-message-menu="true"
                           onClick={e => e.stopPropagation()}
                           style={{
-                            position: 'absolute', bottom: '100%', right: 0,
-                            marginBottom: '0.25rem', background: 'white',
+                            position: 'absolute', top: '100%', right: 0,
+                            marginTop: '0.25rem', background: 'white',
                             borderRadius: 10, boxShadow: '0 4px 16px rgba(0,0,0,0.15)',
                             overflow: 'hidden', zIndex: 1000, minWidth: 110,
                           }}
@@ -6866,7 +7174,6 @@ const saveEdit = async () => {
                         </div>
                       )}
                     </>
-                  )}
                 </div>
               </div>
             );
@@ -6875,71 +7182,217 @@ const saveEdit = async () => {
         <div ref={chatBottomRef} />
       </div>
 
-      {/* 入力エリア */}
-      <div style={{
-        background: '#f0f0f0', borderTop: '1px solid #ddd',
-        padding: '0.625rem 0.75rem', flexShrink: 0,
-        display: 'flex', alignItems: 'center', gap: '0.5rem',
-        position: 'relative',
-      }}>
-        <button type="button"
-          onMouseDown={e => e.preventDefault()}
-          onClick={() => setShowEmojiPicker(p => !p)}
-          style={{
-            background: 'none', border: 'none', fontSize: '1.4rem',
-            cursor: 'pointer', padding: '0.4rem', flexShrink: 0,
-            display: 'flex', alignItems: 'center', lineHeight: 1,
-          }}
-        >😊</button>
-
-        {showEmojiPicker && (
-          <div style={{
-            position: 'absolute', bottom: 60, left: 8,
-            background: 'white', border: '1px solid #e0e0e0',
-            borderRadius: 12, padding: '0.625rem',
-            boxShadow: '0 4px 16px rgba(0,0,0,0.15)',
-            display: 'grid', gridTemplateColumns: 'repeat(6,1fr)',
-            gap: 4, zIndex: 10, maxWidth: 290,
-          }}>
-            {emojis.map((em, i) => (
-              <button key={i} type="button"
+{/* 入力エリア */}
+      <div style={{background: '#f0f0f0', padding: '0.75rem', display: 'flex', gap: '0.5rem', alignItems: 'flex-end', position: 'relative'}}>
+  {pendingImage && (
+  <div style={{
+    position: 'absolute', bottom: '70px', left: '10px', right: '10px',
+    background: 'white', borderRadius: '12px', padding: '0.75rem',
+    boxShadow: '0 4px 12px rgba(0,0,0,0.15)', zIndex: 100
+  }}>
+    <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
+      <img src={pendingImage.previewUrl}
+        style={{ width: 60, height: 60, objectFit: 'cover', borderRadius: 8 }} />
+      <div style={{ flex: 1, fontSize: '0.85rem', color: '#666' }}>
+        画像が選択されました<br/>
+        <span style={{fontSize: '0.75rem', color: '#999'}}>テキストも入力できます</span>
+      </div>
+      <button onClick={() => setPendingImage(null)}
+        style={{ background: 'none', color: '#999', border: 'none', cursor: 'pointer', fontSize: '1.2rem' }}
+      >✕</button>
+    </div>
+  </div>
+)}
+        {editingMessageId ? (
+          <div style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
+            <div style={{
+              fontSize: '0.8rem', color: '#667eea', fontWeight: '600',
+              display: 'flex', alignItems: 'center', gap: '0.5rem'
+            }}>
+              <Edit size={14} />
+              メッセージを編集中
+            </div>
+            <div style={{display: 'flex', gap: '0.5rem', alignItems: 'center'}}>
+              <button type="button"
                 onMouseDown={e => e.preventDefault()}
-                onClick={() => setNewMessage(p => p + em)}
+                onClick={() => setShowEmojiPicker(!showEmojiPicker)}
                 style={{
-                  background: 'none', border: 'none', fontSize: '1.4rem',
-                  cursor: 'pointer', padding: 3, borderRadius: 4, lineHeight: 1,
+                  background: 'none', border: 'none', fontSize: '1.5rem',
+                  cursor: 'pointer', padding: '0.5rem',
+                  display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0
                 }}
-                onMouseEnter={e => e.currentTarget.style.background = '#f0f0f0'}
-                onMouseLeave={e => e.currentTarget.style.background = 'none'}
-              >{em}</button>
-            ))}
+              >😊</button>
+
+              {showEmojiPicker && (
+                <div style={{
+                  position: 'absolute', bottom: '70px', left: '10px',
+                  background: 'white', border: '1px solid #e9ecef',
+                  borderRadius: '12px', padding: '0.75rem',
+                  boxShadow: '0 4px 12px rgba(0,0,0,0.15)',
+                  display: 'grid', gridTemplateColumns: 'repeat(6, 1fr)',
+                  gap: '0.5rem', maxWidth: '300px', zIndex: 1000
+                }}>
+                  {emojis.map((em, i) => (
+                    <button key={i} type="button"
+                      onMouseDown={e => e.preventDefault()}
+                      onClick={() => setEditingMessageText(p => p + em)}
+                      style={{
+                        background: 'none', border: 'none', fontSize: '1.5rem',
+                        cursor: 'pointer', padding: '0.25rem', borderRadius: '4px',
+                      }}
+                      onMouseEnter={e => e.currentTarget.style.background = '#f0f0f0'}
+                      onMouseLeave={e => e.currentTarget.style.background = 'none'}
+                    >{em}</button>
+                  ))}
+                </div>
+              )}
+
+              <input
+                type="text"
+                value={editingMessageText}
+                onChange={e => setEditingMessageText(e.target.value)}
+                onKeyDown={e => {
+                  if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); saveEdit(); }
+                  if (e.key === 'Escape') cancelEdit();
+                }}
+                placeholder="メッセージを編集..."
+                autoFocus
+                style={{
+                  flex: 1, padding: '0.75rem',
+                  border: '2px solid #667eea', borderRadius: '20px',
+                  fontSize: '0.95rem', outline: 'none'
+                }}
+              />
+              <button type="button"
+                onMouseDown={e => e.preventDefault()}
+                onClick={saveEdit}
+                style={{
+                  background: '#10b981', width: '44px', height: '44px',
+                  borderRadius: '50%', border: 'none',
+                  display: 'flex', alignItems: 'center', justifyContent: 'center',
+                  cursor: 'pointer', color: 'white', flexShrink: 0
+                }}
+              ><Check size={20} /></button>
+              <button type="button"
+                onMouseDown={e => e.preventDefault()}
+                onClick={cancelEdit}
+                style={{
+                  background: '#ef4444', width: '44px', height: '44px',
+                  borderRadius: '50%', border: 'none',
+                  display: 'flex', alignItems: 'center', justifyContent: 'center',
+                  cursor: 'pointer', color: 'white', flexShrink: 0
+                }}
+              ><X size={20} /></button>
+            </div>
           </div>
+        ) : (
+          <>
+            <button type="button"
+              onMouseDown={e => e.preventDefault()}
+              onClick={() => setShowEmojiPicker(p => !p)}
+              style={{
+                background: 'none', border: 'none', fontSize: '1.4rem',
+                cursor: 'pointer', padding: '0.4rem', flexShrink: 0,
+                display: 'flex', alignItems: 'center', lineHeight: 1,
+              }}
+            >😊</button>
+
+            {showEmojiPicker && (
+              <div style={{
+                position: 'absolute', bottom: 60, left: 8,
+                background: 'white', border: '1px solid #e0e0e0',
+                borderRadius: 12, padding: '0.625rem',
+                boxShadow: '0 4px 16px rgba(0,0,0,0.15)',
+                display: 'grid', gridTemplateColumns: 'repeat(6,1fr)',
+                gap: 4, zIndex: 10, maxWidth: 290,
+              }}>
+                {emojis.map((em, i) => (
+                  <button key={i} type="button"
+                    onMouseDown={e => e.preventDefault()}
+                    onClick={() => setNewMessage(p => p + em)}
+                    style={{
+                      background: 'none', border: 'none', fontSize: '1.4rem',
+                      cursor: 'pointer', padding: 3, borderRadius: 4, lineHeight: 1,
+                    }}
+                    onMouseEnter={e => e.currentTarget.style.background = '#f0f0f0'}
+                    onMouseLeave={e => e.currentTarget.style.background = 'none'}
+                  >{em}</button>
+                ))}
+              </div>
+            )}
+
+            <input
+              type="text" value={newMessage}
+              onChange={e => setNewMessage(e.target.value)}
+              onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendMsg(); } }}
+              placeholder="メッセージを入力..."
+              style={{
+                flex: 1, padding: '0.7rem 1rem',
+                border: '1px solid #ccc', borderRadius: 24,
+                fontSize: '0.95rem', outline: 'none',
+                background: 'white', minWidth: 0,
+              }}
+            />
+            {newMessage.trim() || pendingImage ? (
+              <button type="button"
+                onMouseDown={e => e.preventDefault()}
+                onClick={() => {
+                  if (pendingImage) {
+                    sendImage(pendingImage.file);
+                    setPendingImage(null);
+                  } else {
+                    sendMsg();
+                  }
+                }}
+                style={{
+                  width: 44, height: 44, borderRadius: '50%', border: 'none',
+                  background: 'linear-gradient(135deg,#667eea,#764ba2)',
+                  display: 'flex', alignItems: 'center', justifyContent: 'center',
+                  cursor: 'pointer', color: 'white', flexShrink: 0, transition: 'background 0.15s',
+                }}
+              ><Send size={20} /></button>
+            ) : (
+              <>
+                <button type="button"
+                  onMouseDown={e => e.preventDefault()}
+                  onClick={() => fileInputRef.current?.click()}
+                  style={{
+                    background: 'none', border: 'none', width: 40, height: 40,
+                    display: 'flex', alignItems: 'center', justifyContent: 'center',
+                    cursor: 'pointer', color: '#667eea', flexShrink: 0,
+                  }}
+                ><ImageIcon size={22} /></button>
+                <button type="button"
+                  onMouseDown={e => e.preventDefault()}
+                  onClick={() => cameraInputRef.current?.click()}
+                  style={{
+                    background: 'none', border: 'none', width: 40, height: 40,
+                    display: 'flex', alignItems: 'center', justifyContent: 'center',
+                    cursor: 'pointer', color: '#667eea', flexShrink: 0,
+                  }}
+                ><Camera size={22} /></button>
+                <button type="button"
+                  onClick={isRecording ? stopRecording : startRecording}
+                  style={{
+                    background: isRecording ? '#ef4444' : 'none',
+                    border: 'none', width: 40, height: 40,
+                    borderRadius: isRecording ? '50%' : 0,
+                    display: 'flex', alignItems: 'center', justifyContent: 'center',
+                    cursor: 'pointer',
+                    color: isRecording ? 'white' : '#667eea',
+                    flexShrink: 0,
+                  }}
+                ><Mic size={22} /></button>
+              </>
+            )}
+          </>
         )}
-
-        <input
-          type="text" value={newMessage}
-          onChange={e => setNewMessage(e.target.value)}
-          onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendMsg(); } }}
-          placeholder="メッセージを入力..."
-          style={{
-            flex: 1, padding: '0.7rem 1rem',
-            border: '1px solid #ccc', borderRadius: 24,
-            fontSize: '0.95rem', outline: 'none',
-            background: 'white', minWidth: 0,
-          }}
-        />
-
-        <button type="button"
-          onMouseDown={e => e.preventDefault()}
-          onClick={sendMsg}
-          style={{
-            width: 44, height: 44, borderRadius: '50%', border: 'none',
-            background: newMessage.trim() ? 'linear-gradient(135deg,#667eea,#764ba2)' : '#ccc',
-            display: 'flex', alignItems: 'center', justifyContent: 'center',
-            cursor: newMessage.trim() ? 'pointer' : 'default',
-            color: 'white', flexShrink: 0, transition: 'background 0.15s',
-          }}
-        ><Send size={20} /></button>
+        <input ref={fileInputRef} type="file" accept="image/*"
+          onChange={e => { const f = e.target.files?.[0]; if(f) setPendingImage({file:f, previewUrl:URL.createObjectURL(f)}); e.target.value=''; }}
+          style={{display:'none'}} />
+        <input ref={cameraInputRef} type="file" accept="image/*" capture="environment"
+          onChange={e => { const f = e.target.files?.[0]; if(f) setPendingImage({file:f, previewUrl:URL.createObjectURL(f)}); e.target.value=''; }}
+          style={{display:'none'}} />
       </div>
     </div>
   );
@@ -8123,6 +8576,11 @@ const ParentChatScreen = () => {
   const [editingMessageId, setEditingMessageId] = useState(null);
   const [editingMessageText, setEditingMessageText] = useState('');
   const chatBottomRef = useRef(null);
+  const fileInputRef = useRef(null);
+  const cameraInputRef = useRef(null);
+  const mediaRecorderRef = useRef(null);      // ← 追加
+  const [pendingImage, setPendingImage] = useState(null);
+  const [isRecording, setIsRecording] = useState(false); 
   const emojis = ['😀','😂','🥰','😍','🤔','😅','😊','👍','❤️','🎉','🔥','✨','💯','👏','🙏','😭','😱','🤗','😎','🥳'];
 
   useEffect(() => {
@@ -8257,6 +8715,75 @@ const loadHistory = async (parentId) => {
     }
   };
 
+  const sendImage = async (file) => {
+  try {
+    const ext = file.name.split('.').pop();
+    const path = `chat/${currentUser.id}/${Date.now()}.${ext}`;
+    const { error: uploadError } = await supabase.storage
+      .from('chat-images').upload(path, file);
+    if (uploadError) { alert('画像のアップロードに失敗しました'); return; }
+    const { data: urlData } = supabase.storage.from('chat-images').getPublicUrl(path);
+    const fullText = newMessage.trim()
+      ? `[画像] ${urlData.publicUrl}\n${newMessage.trim()}`
+      : `[画像] ${urlData.publicUrl}`;
+    const targetId = chatParent?.id;
+    const { data, error } = await supabase
+      .from('messages')
+      .insert([{ from_user_id: currentUser.id, to_user_id: targetId, text: fullText, read: false }])
+      .select().single();
+    if (error) throw error;
+    if (data) {
+      setChatMessages(prev => [...prev, {
+        id: data.id, from: data.from_user_id, to: data.to_user_id,
+        text: data.text, timestamp: new Date(data.created_at),
+        read: false, edited: false, editedAt: null,
+      }]);
+      setNewMessage('');
+    }
+  } catch (e) { alert('画像の送信に失敗しました'); }
+};
+
+const stopRecording = () => {
+  if (mediaRecorderRef.current && isRecording) {
+    mediaRecorderRef.current.stop();
+    setIsRecording(false);
+  }
+};
+
+const startRecording = async () => {
+  try {
+    const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    const mediaRecorder = new MediaRecorder(stream);
+    mediaRecorderRef.current = mediaRecorder;
+    const chunks = [];
+    mediaRecorder.ondataavailable = e => chunks.push(e.data);
+    mediaRecorder.onstop = async () => {
+      stream.getTracks().forEach(t => t.stop());
+      const blob = new Blob(chunks, { type: 'audio/webm' });
+      const path = `chat/${currentUser.id}/${Date.now()}.webm`;
+      const { error: uploadError } = await supabase.storage
+        .from('chat-images').upload(path, blob);
+      if (uploadError) { alert('音声のアップロードに失敗しました'); return; }
+      const { data: urlData } = supabase.storage.from('chat-images').getPublicUrl(path);
+      const targetId = chatParent?.id;
+      const { data, error } = await supabase
+        .from('messages')
+        .insert([{ from_user_id: currentUser.id, to_user_id: targetId, text: `[音声] ${urlData.publicUrl}`, read: false }])
+        .select().single();
+      if (error) { alert('音声の送信に失敗しました'); return; }
+      if (data) {
+        setChatMessages(prev => [...prev, {
+          id: data.id, from: data.from_user_id, to: data.to_user_id,
+          text: data.text, timestamp: new Date(data.created_at),
+          read: false, edited: false, editedAt: null,
+        }]);
+      }
+    };
+    mediaRecorder.start();
+    setIsRecording(true);
+  } catch (e) { alert('マイクへのアクセスが拒否されました'); }
+};
+
   const deleteMessage = async (messageId) => {
     setChatMessages(prev => prev.filter(m => m.id !== messageId));
     try {
@@ -8349,6 +8876,22 @@ const saveEdit = async () => {
           <h3 style={{ color: 'white', margin: 0, fontSize: '1rem', fontWeight: 700 }}>{chatParent.name}</h3>
           <p style={{ color: 'rgba(255,255,255,0.8)', margin: 0, fontSize: '0.76rem' }}>保護者</p>
         </div>
+        <button
+          onClick={() => alert('音声通話機能は準備中です')}
+          style={{
+            background: 'rgba(255,255,255,0.2)', border: 'none', borderRadius: '50%',
+            width: 40, height: 40, display: 'flex', alignItems: 'center',
+            justifyContent: 'center', cursor: 'pointer', color: 'white', flexShrink: 0,
+          }}
+        ><Phone size={20} /></button>
+        <button
+          onClick={() => alert('ビデオ通話機能は準備中です')}
+          style={{
+            background: 'rgba(255,255,255,0.2)', border: 'none', borderRadius: '50%',
+            width: 40, height: 40, display: 'flex', alignItems: 'center',
+            justifyContent: 'center', cursor: 'pointer', color: 'white', flexShrink: 0,
+          }}
+        ><Video size={20} /></button>
       </div>
 
       {/* メッセージ */}
@@ -8382,36 +8925,6 @@ const saveEdit = async () => {
                 alignItems: isMine ? 'flex-end' : 'flex-start',
                 maxWidth: '72%', position: 'relative',
               }}>
-                {isEditing ? (
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: '0.4rem', width: '100%', minWidth: 200 }}>
-                    <input
-                      type="text" value={editingMessageText}
-                      onChange={e => setEditingMessageText(e.target.value)}
-                      onKeyDown={e => {
-                        if (e.key === 'Enter') { e.preventDefault(); saveEdit(); }
-                        if (e.key === 'Escape') cancelEdit();
-                      }}
-                      autoFocus
-                      style={{
-                        padding: '0.6rem 0.875rem', borderRadius: 18,
-                        border: '2px solid #667eea', fontSize: '0.95rem',
-                        outline: 'none', background: 'white',
-                      }}
-                    />
-                    <div style={{ display: 'flex', gap: '0.4rem', justifyContent: 'flex-end' }}>
-                      <button onClick={cancelEdit} style={{
-                        padding: '0.3rem 0.75rem', borderRadius: 12, border: 'none',
-                        background: '#e0e0e0', color: '#555', fontSize: '0.8rem',
-                        cursor: 'pointer', fontWeight: 600,
-                      }}>キャンセル</button>
-                      <button onClick={saveEdit} style={{
-                        padding: '0.3rem 0.75rem', borderRadius: 12, border: 'none',
-                        background: '#667eea', color: 'white', fontSize: '0.8rem',
-                        cursor: 'pointer', fontWeight: 600,
-                      }}>保存</button>
-                    </div>
-                  </div>
-                ) : (
                   <>
                     <div
                       data-message-menu="true"
@@ -8428,7 +8941,24 @@ const saveEdit = async () => {
                         cursor: isMine ? 'pointer' : 'default',
                       }}
                     >
-                      <p style={{ margin: 0, fontSize: '0.95rem', lineHeight: 1.4, color: '#111' }}>{msg.text}</p>
+                      {msg.text.startsWith('[画像] ') ? (
+  <div>
+    <img
+      src={msg.text.split('\n')[0].replace('[画像] ', '')}
+      alt="画像"
+      style={{ maxWidth: '100%', borderRadius: 12, display: 'block', maxHeight: 300 }}
+    />
+    {msg.text.split('\n')[1] && (
+      <p style={{ margin: '0.5rem 0 0 0', lineHeight: '1.4', fontSize: '0.95rem' }}>
+        {msg.text.split('\n')[1]}
+      </p>
+    )}
+  </div>
+) : msg.text.startsWith('[音声] ') ? (
+  <audio controls src={msg.text.replace('[音声] ', '')} style={{ maxWidth: '100%' }} />
+) : (
+  <p style={{ margin: 0, fontSize: '0.95rem', lineHeight: 1.4, color: '#111' }}>{msg.text}</p>
+)}
                     </div>
                     <div style={{ display: 'flex', alignItems: 'center', gap: '0.3rem', marginTop: '0.15rem', padding: '0 0.2rem' }}>
                       <small style={{ fontSize: '0.64rem', color: '#888' }}>
@@ -8446,7 +8976,7 @@ const saveEdit = async () => {
                         data-message-menu="true"
                         onClick={e => e.stopPropagation()}
                         style={{
-                          position: 'absolute', bottom: '100%', right: 0,
+                          position: 'absolute', top: '100%', right: 0,
                           marginBottom: '0.25rem', background: 'white',
                           borderRadius: 10, boxShadow: '0 4px 16px rgba(0,0,0,0.15)',
                           overflow: 'hidden', zIndex: 1000, minWidth: 110,
@@ -8492,7 +9022,6 @@ const saveEdit = async () => {
                       </div>
                     )}
                   </>
-                )}
               </div>
             </div>
           );
@@ -8500,59 +9029,221 @@ const saveEdit = async () => {
         <div ref={chatBottomRef} />
       </div>
 
-      {/* 入力エリア */}
-      <div style={{
-        background: '#f0f0f0', borderTop: '1px solid #ddd',
-        padding: '0.625rem 0.75rem', flexShrink: 0,
-        display: 'flex', alignItems: 'center', gap: '0.5rem', position: 'relative'
-      }}>
-        <button type="button"
-          onMouseDown={e => e.preventDefault()}
-          onClick={() => setShowEmojiPicker(p => !p)}
-          style={{ background:'none', border:'none', fontSize:'1.4rem', cursor:'pointer', padding:'0.4rem', flexShrink:0, display:'flex', alignItems:'center', lineHeight:1 }}
-        >😊</button>
-
-        {showEmojiPicker && (
-          <div style={{
-            position:'absolute', bottom:'60px', left:'8px',
-            background:'white', border:'1px solid #e0e0e0', borderRadius:'12px',
-            padding:'0.625rem', boxShadow:'0 4px 16px rgba(0,0,0,0.15)',
-            display:'grid', gridTemplateColumns:'repeat(6,1fr)', gap:'4px', zIndex:10, maxWidth:'290px'
-          }}>
-            {emojis.map((em, i) => (
-              <button key={i} type="button"
+{/* 入力エリア */}
+      <div style={{background: '#f0f0f0', padding: '0.75rem', display: 'flex', gap: '0.5rem', alignItems: 'flex-end', position: 'relative'}}>
+  {pendingImage && (
+  <div style={{
+    position: 'absolute', bottom: '70px', left: '10px', right: '10px',
+    background: 'white', borderRadius: '12px', padding: '0.75rem',
+    boxShadow: '0 4px 12px rgba(0,0,0,0.15)', zIndex: 100
+  }}>
+    <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
+      <img src={pendingImage.previewUrl}
+        style={{ width: 60, height: 60, objectFit: 'cover', borderRadius: 8 }} />
+      <div style={{ flex: 1, fontSize: '0.85rem', color: '#666' }}>
+        画像が選択されました<br/>
+        <span style={{fontSize: '0.75rem', color: '#999'}}>テキストも入力できます</span>
+      </div>
+      <button onClick={() => setPendingImage(null)}
+        style={{ background: 'none', color: '#999', border: 'none', cursor: 'pointer', fontSize: '1.2rem' }}
+      >✕</button>
+    </div>
+  </div>
+)}
+        {editingMessageId ? (
+          <div style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
+            <div style={{
+              fontSize: '0.8rem', color: '#667eea', fontWeight: '600',
+              display: 'flex', alignItems: 'center', gap: '0.5rem'
+            }}>
+              <Edit size={14} />
+              メッセージを編集中
+            </div>
+            <div style={{display: 'flex', gap: '0.5rem', alignItems: 'center'}}>
+              <button type="button"
                 onMouseDown={e => e.preventDefault()}
-                onClick={() => setNewMessage(p => p + em)}
-                style={{ background:'none', border:'none', fontSize:'1.4rem', cursor:'pointer', padding:'3px', borderRadius:'4px', lineHeight:1 }}
-                onMouseEnter={e => e.currentTarget.style.background='#f0f0f0'}
-                onMouseLeave={e => e.currentTarget.style.background='none'}
-              >{em}</button>
-            ))}
+                onClick={() => setShowEmojiPicker(!showEmojiPicker)}
+                style={{
+                  background: 'none', border: 'none', fontSize: '1.5rem',
+                  cursor: 'pointer', padding: '0.5rem',
+                  display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0
+                }}
+              >😊</button>
+
+              {showEmojiPicker && (
+                <div style={{
+                  position: 'absolute', bottom: '70px', left: '10px',
+                  background: 'white', border: '1px solid #e9ecef',
+                  borderRadius: '12px', padding: '0.75rem',
+                  boxShadow: '0 4px 12px rgba(0,0,0,0.15)',
+                  display: 'grid', gridTemplateColumns: 'repeat(6, 1fr)',
+                  gap: '0.5rem', maxWidth: '300px', zIndex: 1000
+                }}>
+                  {emojis.map((em, i) => (
+                    <button key={i} type="button"
+                      onMouseDown={e => e.preventDefault()}
+                      onClick={() => setEditingMessageText(p => p + em)}
+                      style={{
+                        background: 'none', border: 'none', fontSize: '1.5rem',
+                        cursor: 'pointer', padding: '0.25rem', borderRadius: '4px',
+                      }}
+                      onMouseEnter={e => e.currentTarget.style.background = '#f0f0f0'}
+                      onMouseLeave={e => e.currentTarget.style.background = 'none'}
+                    >{em}</button>
+                  ))}
+                </div>
+              )}
+
+              <input
+                type="text"
+                value={editingMessageText}
+                onChange={e => setEditingMessageText(e.target.value)}
+                onKeyDown={e => {
+                  if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); saveEdit(); }
+                  if (e.key === 'Escape') cancelEdit();
+                }}
+                placeholder="メッセージを編集..."
+                autoFocus
+                style={{
+                  flex: 1, padding: '0.75rem',
+                  border: '2px solid #667eea', borderRadius: '20px',
+                  fontSize: '0.95rem', outline: 'none'
+                }}
+              />
+              <button type="button"
+                onMouseDown={e => e.preventDefault()}
+                onClick={saveEdit}
+                style={{
+                  background: '#10b981', width: '44px', height: '44px',
+                  borderRadius: '50%', border: 'none',
+                  display: 'flex', alignItems: 'center', justifyContent: 'center',
+                  cursor: 'pointer', color: 'white', flexShrink: 0
+                }}
+              ><Check size={20} /></button>
+              <button type="button"
+                onMouseDown={e => e.preventDefault()}
+                onClick={cancelEdit}
+                style={{
+                  background: '#ef4444', width: '44px', height: '44px',
+                  borderRadius: '50%', border: 'none',
+                  display: 'flex', alignItems: 'center', justifyContent: 'center',
+                  cursor: 'pointer', color: 'white', flexShrink: 0
+                }}
+              ><X size={20} /></button>
+            </div>
           </div>
+        ) : (
+          <>
+            <button type="button"
+              onMouseDown={e => e.preventDefault()}
+              onClick={() => setShowEmojiPicker(p => !p)}
+              style={{
+                background: 'none', border: 'none', fontSize: '1.4rem',
+                cursor: 'pointer', padding: '0.4rem', flexShrink: 0,
+                display: 'flex', alignItems: 'center', lineHeight: 1,
+              }}
+            >😊</button>
+
+            {showEmojiPicker && (
+              <div style={{
+                position: 'absolute', bottom: 60, left: 8,
+                background: 'white', border: '1px solid #e0e0e0',
+                borderRadius: 12, padding: '0.625rem',
+                boxShadow: '0 4px 16px rgba(0,0,0,0.15)',
+                display: 'grid', gridTemplateColumns: 'repeat(6,1fr)',
+                gap: 4, zIndex: 10, maxWidth: 290,
+              }}>
+                {emojis.map((em, i) => (
+                  <button key={i} type="button"
+                    onMouseDown={e => e.preventDefault()}
+                    onClick={() => setNewMessage(p => p + em)}
+                    style={{
+                      background: 'none', border: 'none', fontSize: '1.4rem',
+                      cursor: 'pointer', padding: 3, borderRadius: 4, lineHeight: 1,
+                    }}
+                    onMouseEnter={e => e.currentTarget.style.background = '#f0f0f0'}
+                    onMouseLeave={e => e.currentTarget.style.background = 'none'}
+                  >{em}</button>
+                ))}
+              </div>
+            )}
+
+            <input
+              type="text" value={newMessage}
+              onChange={e => setNewMessage(e.target.value)}
+              onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendMsg(); } }}
+              placeholder="メッセージを入力..."
+              style={{
+                flex: 1, padding: '0.7rem 1rem',
+                border: '1px solid #ccc', borderRadius: 24,
+                fontSize: '0.95rem', outline: 'none',
+                background: 'white', minWidth: 0,
+              }}
+            />
+            {newMessage.trim() || pendingImage ? (
+              <button type="button"
+                onMouseDown={e => e.preventDefault()}
+                onClick={() => {
+                  if (pendingImage) {
+                    sendImage(pendingImage.file);
+                    setPendingImage(null);
+                  } else {
+                    sendMsg();
+                  }
+                }}
+                style={{
+                  width: 44, height: 44, borderRadius: '50%', border: 'none',
+                  background: 'linear-gradient(135deg,#667eea,#764ba2)',
+                  display: 'flex', alignItems: 'center', justifyContent: 'center',
+                  cursor: 'pointer', color: 'white', flexShrink: 0, transition: 'background 0.15s',
+                }}
+              ><Send size={20} /></button>
+            ) : (
+              <>
+                <button type="button"
+                  onMouseDown={e => e.preventDefault()}
+                  onClick={() => fileInputRef.current?.click()}
+                  style={{
+                    background: 'none', border: 'none', width: 40, height: 40,
+                    display: 'flex', alignItems: 'center', justifyContent: 'center',
+                    cursor: 'pointer', color: '#667eea', flexShrink: 0,
+                  }}
+                ><ImageIcon size={22} /></button>
+                <button type="button"
+                  onMouseDown={e => e.preventDefault()}
+                  onClick={() => cameraInputRef.current?.click()}
+                  style={{
+                    background: 'none', border: 'none', width: 40, height: 40,
+                    display: 'flex', alignItems: 'center', justifyContent: 'center',
+                    cursor: 'pointer', color: '#667eea', flexShrink: 0,
+                  }}
+                ><Camera size={22} /></button>
+                <button type="button"
+                  onClick={isRecording ? stopRecording : startRecording}
+                  style={{
+                    background: isRecording ? '#ef4444' : 'none',
+                    border: 'none', width: 40, height: 40,
+                    borderRadius: isRecording ? '50%' : 0,
+                    display: 'flex', alignItems: 'center', justifyContent: 'center',
+                    cursor: 'pointer',
+                    color: isRecording ? 'white' : '#667eea',
+                    flexShrink: 0,
+                  }}
+                ><Mic size={22} /></button>
+              </>
+            )}
+          </>
         )}
-
-        <input type="text" value={newMessage}
-          onChange={e => setNewMessage(e.target.value)}
-          onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendMsg(); } }}
-          placeholder="メッセージを入力..."
-          style={{ flex:1, padding:'0.7rem 1rem', border:'1px solid #ccc', borderRadius:'24px', fontSize:'0.95rem', outline:'none', background:'white', minWidth:0 }}
-        />
-
-        <button type="button"
-          onMouseDown={e => e.preventDefault()}
-          onClick={sendMsg}
-          style={{
-            width:44, height:44, borderRadius:'50%', border:'none',
-            background: newMessage.trim() ? 'linear-gradient(135deg,#667eea,#764ba2)' : '#ccc',
-            display:'flex', alignItems:'center', justifyContent:'center',
-            cursor: newMessage.trim() ? 'pointer' : 'default',
-            color:'white', flexShrink:0, transition:'background 0.15s',
-          }}
-        ><Send size={20} /></button>
+        <input ref={fileInputRef} type="file" accept="image/*"
+          onChange={e => { const f = e.target.files?.[0]; if(f) setPendingImage({file:f, previewUrl:URL.createObjectURL(f)}); e.target.value=''; }}
+          style={{display:'none'}} />
+        <input ref={cameraInputRef} type="file" accept="image/*" capture="environment"
+          onChange={e => { const f = e.target.files?.[0]; if(f) setPendingImage({file:f, previewUrl:URL.createObjectURL(f)}); e.target.value=''; }}
+          style={{display:'none'}} />
       </div>
     </div>
   );
-  };
+};
 
   // ===== 保護者選択画面（複数保護者の場合の独立ビュー） =====
   const ParentListScreen = () => {
