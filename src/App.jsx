@@ -3,7 +3,7 @@ import { QRCodeCanvas } from 'qrcode.react';
 import { 
   MapPin, AlertTriangle, Activity, Battery, Clock, User, Mail, 
   Shield, Users, LogOut, Navigation, Phone, MessageCircle, Calendar, Bell, Check,
-  Send, X, Plus, Settings, ChevronRight, Edit, Trash2, Video,
+  Send, X, Plus, Settings, ChevronRight, Edit, Trash2, Video, Crown,
   Image as ImageIcon, Camera, Mic
 } from 'lucide-react';
 import { createClient } from '@supabase/supabase-js';
@@ -5542,7 +5542,9 @@ onClick={() => openProfileModal(
                           gap: '0.25rem'
                         }}>
                           {msg.userName}
-                          {msg.userId === groupInfo?.created_by && ' 👑'}
+                          {msg.userId === groupInfo?.created_by && (
+                          <Crown size={12} color="#f59e0b" />
+                        )}
                         </div>
                       )}
                       
@@ -6478,9 +6480,9 @@ onClick={() => openProfileModal(
                                 letterSpacing: '0.5px'
                               }}>YOU</span>
                             )}
-                            {member.id === groupInfo?.created_by && (
-                              <span style={{fontSize: '1rem'}}>👑</span>
-                            )}
+                          {member.id === groupInfo?.created_by && (
+                            <Crown size={14} color="#f59e0b" />
+                          )}
                           </div>
                         </div>
                         
@@ -6632,7 +6634,7 @@ onClick={() => openProfileModal(
 
               <h2 style={{color: 'white', margin: '0 0 0.5rem 0', fontSize: '1.5rem', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '0.5rem'}}>
                 {selectedMember.name}
-                {selectedMember.id === groupInfo?.created_by && <span>👑</span>}
+                {selectedMember.id === groupInfo?.created_by && <Crown size={14} color="#f59e0b" />}
               </h2>
               
               <div style={{display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '0.5rem'}}>
